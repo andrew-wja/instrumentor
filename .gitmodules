@@ -1,0 +1,6 @@
+[submodule "llvm-hs"]
+	path = llvm-hs
+	url = ./llvm-hs
+[submodule "llvm-project"]
+	path = llvm-project
+	url = ./llvm-project/
