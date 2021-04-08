@@ -1,3 +1,5 @@
 .stack-work/
 *~
 *.lock
+llvm-build/
+llvm-root/

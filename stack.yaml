@@ -8,13 +8,8 @@ packages:
 
 ghc-options:
     "$locals": -Wall
-    "$targets": -Werror
+    "$targets": -Wall
     "$everything": -O3 -fllvm
 
-extra-deps:
-  - git: https://github.com/llvm/llvm-project.git
-    commit: d28af7c654d8db0b68c175db5ce212d74fb5e9bc # release/12.x
-  - git: https://github.com/llvm-hs/llvm-hs.git
-    commit: 24ddfdf45f69bbe94ec0c97c7d4faae4a0ed205f # llvm-12-unstable
-
-# extra-lib-dirs: [/path/to/dir]
+extra-lib-dirs: [./llvm-root/lib]
+extra-include-dirs: [./llvm-root/include]
