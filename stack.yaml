@@ -11,5 +11,6 @@ ghc-options:
     "$targets": -Wall
     "$everything": -O3 -fllvm
 
-extra-lib-dirs: [./llvm-root/lib]
-extra-include-dirs: [./llvm-root/include]
+extra-lib-dirs: [ llvm-root/lib ]
+
+extra-include-dirs: [ llvm-root/include ]

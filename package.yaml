@@ -38,3 +38,4 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - instrumentor
+    - with-utf8
