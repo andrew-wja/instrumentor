@@ -23,6 +23,10 @@ dependencies:
 
 library:
   source-dirs: src
+  dependencies:
+    - bytestring
+    - llvm-hs
+    - llvm-hs-pure
 
 executables:
   instrumentor:
