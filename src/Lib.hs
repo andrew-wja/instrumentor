@@ -1,4 +1,4 @@
-module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC) where
+module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, toAST, fromAST) where
 
 import Prelude hiding (readFile, writeFile, print)
 import qualified LLVM.AST as AST
@@ -39,3 +39,8 @@ writeBC file m = do
 
 toAST :: LLVM.Internal.Module.Module -> IO AST.Module
 toAST = moduleAST
+
+fromAST :: AST.Module -> IO LLVM.Internal.Module.Module
+fromAST m =
+  withContext $ (\ctx -> do
+    withModuleFromAST ctx m pure)

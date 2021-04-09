@@ -39,3 +39,4 @@ executables:
     dependencies:
     - instrumentor
     - with-utf8
+    - llvm-hs
