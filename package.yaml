@@ -40,3 +40,4 @@ executables:
     - instrumentor
     - with-utf8
     - llvm-hs
+    - bytestring

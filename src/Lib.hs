@@ -1,4 +1,4 @@
-module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, toAST, fromAST) where
+module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST) where
 
 import Prelude hiding (readFile, writeFile, print)
 import qualified LLVM.AST as AST
@@ -35,6 +35,11 @@ writeIR file m = do
 writeBC :: String -> AST.Module -> IO ()
 writeBC file m = do
   ir <- printBC m
+  writeFile file ir
+
+writeBC' :: String -> LLVM.Internal.Module.Module -> IO ()
+writeBC' file m = do
+  ir <- moduleBitcode m
   writeFile file ir
 
 toAST :: LLVM.Internal.Module.Module -> IO AST.Module
