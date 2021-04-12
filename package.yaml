@@ -25,6 +25,7 @@ library:
   source-dirs: src
   dependencies:
     - bytestring
+    - containers
     - llvm-hs
     - llvm-hs-pure
 
@@ -37,7 +38,7 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - instrumentor
-    - with-utf8
-    - llvm-hs
     - bytestring
+    - instrumentor
+    - llvm-hs
+    - with-utf8

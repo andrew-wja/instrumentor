@@ -6,7 +6,6 @@ import qualified SoftboundCETS
 import Main.Utf8 (withUtf8, withStdTerminalHandles)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import LLVM.Module (linkModules)
 import qualified Data.ByteString as BS
 
 main :: IO ()
