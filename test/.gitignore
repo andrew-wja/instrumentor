@@ -2,3 +2,7 @@ test
 test.bc
 test.ll
 test.s
+instrumented
+instrumented.bc
+instrumented.ll
+instrumented.s

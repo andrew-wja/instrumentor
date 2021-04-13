@@ -91,7 +91,7 @@ sbcetsModule = do
          [ptr i8, ptr i8, ptr i8, i64, ptr i8, i32] void
 
   _ <- extern (mkName "__softboundcets_metadata_load")
-         [ptr i8, ptr i8, ptr i8, ptr i64, ptr i8] void
+         [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] void
 
   _ <- extern (mkName "__softboundcets_metadata_store")
          [ptr i8, ptr i8, ptr i8, i64, ptr i8] void

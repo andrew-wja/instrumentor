@@ -4,6 +4,9 @@ import Data.Set hiding (map, filter)
 import Data.String (IsString(..))
 import LLVM.AST
 import LLVM.AST.Global
+import LLVM.AST.Type
+import LLVM.AST.Constant
+import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
@@ -40,7 +43,7 @@ instrument m = do
 
     instrumentFunction ifs g@(GlobalDefinition f@(Function {})) =
       if member (name f) ifs then
-        GlobalDefinition $ f { basicBlocks = execIRBuilder emptyIRBuilder $ instrumentBlocks $ basicBlocks f }
+        GlobalDefinition $ f { basicBlocks = execIRBuilder emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ instrumentBlocks $ basicBlocks f }
       else g
 
     instrumentFunction _ x = x
@@ -69,14 +72,22 @@ instrument m = do
         { partialBlockTerm = Just (Do t) }
 
     instrumentInst i@(_ := o)
-      | (Load {}) <- o = do
-        -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_spatial_load_deference_check" ...
-        -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_temporal_load_deference_check" ...
+      | (Load _ addr@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
+        base <- alloca (ptr i8) Nothing 8
+        bound <- alloca (ptr i8) Nothing 8
+        key <- alloca (i64) Nothing 8
+        lock <- alloca (ptr i8) Nothing 8
+        addr' <- bitcast addr (ptr i8)
+        _ <- call (ConstantOperand $ GlobalReference (ptr $ FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False)
+                                                     (mkName "__softboundcets_metadata_load"))
+                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
         emitNamedInst i
 
       | (Store {}) <- o = do
         -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_spatial_store_deference_check" ...
         -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_temporal_store_deference_check" ...
         emitNamedInst i
+
+      | otherwise = emitNamedInst i
 
     instrumentInst i = emitNamedInst i
