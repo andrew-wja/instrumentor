@@ -50,7 +50,7 @@ instrument m = do
 
     emitBlock (BasicBlock n i t) = do
       emitBlockStart n
-      mapM_ emitNamedInst i
+      mapM_ instrumentInst i
       emitNamedTerm t
 
     emitNamedInst (n := i) = do
@@ -60,24 +60,23 @@ instrument m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
-    emitNamedTerm (_ := _) = undefined -- we should never see this happen
-                                       -- named terminators are a quirk of LLVM IR
+    emitNamedTerm (_ := _) = undefined
+    -- we should never see this happen
+    -- "named terminator" is a quirk of LLVM IR
 
     emitNamedTerm (Do t) = do
       modifyBlock $ \bb -> bb
         { partialBlockTerm = Just (Do t) }
 
-    -- ~ (BasicBlock n i t) =
-      -- ~ BasicBlock n (concatMap instrumentInst i) t
-
-    -- ~ instrumentInst :: Named Instruction -> [Named Instruction]
-    -- ~ instrumentInst (n := i)
-      -- ~ | (Load {}) <- i = execIRBuilder $ do
+    instrumentInst i@(_ := o)
+      | (Load {}) <- o = do
         -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_spatial_load_deference_check" ...
         -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_temporal_load_deference_check" ...
+        emitNamedInst i
 
-      -- ~ | (Store {}) <- i =
-      -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_spatial_store_deference_check" ...
-      -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_temporal_store_deference_check" ...
+      | (Store {}) <- o = do
+        -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_spatial_store_deference_check" ...
+        -- ~ call (ConstantOperand $ GlobalReference "__softboundcets_temporal_store_deference_check" ...
+        emitNamedInst i
 
-    -- ~ instrumentInst i = pure [i]
+    instrumentInst i = emitNamedInst i
