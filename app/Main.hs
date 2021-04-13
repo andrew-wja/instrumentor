@@ -6,7 +6,6 @@ import qualified SoftboundCETS
 import Main.Utf8 (withUtf8, withStdTerminalHandles)
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import qualified Data.ByteString as BS
 
 main :: IO ()
 main = withStdTerminalHandles $ withUtf8 $ do
@@ -16,8 +15,7 @@ main = withStdTerminalHandles $ withUtf8 $ do
     let inputFile = head args
     parsed <- Lib.readBC inputFile
     instrumented <- SoftboundCETS.instrument parsed
-    instrumentedIR <- Lib.printIR instrumented
-    BS.writeFile inputFile instrumentedIR
+    Lib.writeBC inputFile instrumented
     exitSuccess
   else do
     putStrLn "usage: instrumentor <file>.bc"
