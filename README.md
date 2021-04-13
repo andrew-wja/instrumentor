@@ -15,6 +15,4 @@ To instrument an LLVM bitcode module, say
 LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$PATH stack exec -- instrumentor target.bc
 ```
 
-The instrumented code can be linked with the implementation of the instrumentation runtime using `llvm-link`
-
-Build the instrumentation runtimes with `runtime-setup.sh`
+To play with a simple example, `make test.ll test.s test` in the `test` subdirectory.
