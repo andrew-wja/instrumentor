@@ -15,11 +15,9 @@ main = withStdTerminalHandles $ withUtf8 $ do
   if (length args) == 1 then do
     let inputFile = head args
     parsed <- Lib.readBC inputFile
-    (sbc, instrumented) <- SoftboundCETS.instrument parsed
-    sbcIR <- Lib.printIR sbc
-    BS.putStr sbcIR
+    instrumented <- SoftboundCETS.instrument parsed
     instrumentedIR <- Lib.printIR instrumented
-    BS.putStr instrumentedIR
+    BS.writeFile inputFile instrumentedIR
     exitSuccess
   else do
     putStrLn "usage: instrumentor <file>.bc"
