@@ -8,7 +8,7 @@ cmake -G "Unix Makefiles" ../llvm-project/llvm/ -DCMAKE_{C_COMPILER=clang,CXX_CO
 -DLLVM_{TARGETS_TO_BUILD="X86",ENABLE_PROJECTS="clang;compiler-rt;openmp",INCLUDE_{TOOLS=ON,EXAMPLES=OFF,TESTS=OFF,BENCHMARKS=OFF},ENABLE_BINDINGS=OFF,PARALLEL_LINK_JOBS=1,BUILD_LLVM_DYLIB=ON,LINK_LLVM_DYLIB=ON} \
 -DCOMPILER_RT_BUILD_{XRAY=OFF,LIBFUZZER=OFF,PROFILE=OFF,MEMPROF=OFF}
 
-cmake --build . --parallel 6
+cmake --build . --parallel 2
 
 cmake --build . --target install
 

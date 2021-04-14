@@ -4,4 +4,4 @@
 *.cabal
 llvm-build/
 llvm-root/
-runtime-build/
+runtimes-build/
