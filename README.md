@@ -26,4 +26,5 @@ LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$PA
 ```
 
 To play with a simple example, `make test.ll instrumented.ll` in the `test`
-subdirectory and compare the output files.
+subdirectory and compare the output files. See the `Makefile` in the `test`
+subdirectory for more example usage.

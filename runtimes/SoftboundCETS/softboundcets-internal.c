@@ -452,13 +452,34 @@ static void softboundcets_init_ctype(){
   char* ptr;
   char* base_ptr;
 
+/*
+ * In order to check that accesses to the __ctype_b array are in bounds, we must
+ * manually set up a base and bound for the array. This lives in a separate
+ * secondary trie level "bucket" created specifically for this purpose.
+ *
+ * The description of __ctype_b_loc() in the Linux Standard Base Core Spec is as
+ * follows:
+ *
+ * The __ctype_b_loc() function shall return a pointer into an array of
+ * characters in the current locale that contains characteristics for each
+ * character in the current character set. The array shall contain a total of 384
+ * characters, and can be indexed with any signed or unsigned char (i.e. with an
+ * index value between -128 and 255). If the application is multithreaded, the
+ * array shall be local to the current thread.
+ *
+ * Since this array is a global, it uses the __softboundcets_global_lock
+ * However, the array cannot be deallocated, so this is mostly just a formality.
+ */
+
   ptr = (void*) __ctype_b_loc();
+
   base_ptr = (void*) (*(__ctype_b_loc()));
+
   __softboundcets_allocation_secondary_trie_allocate(base_ptr);
 
-  __softboundcets_metadata_store(ptr, ((char*) base_ptr - 129),
-                                 ((char*) base_ptr + 256), 1,
-                                 __softboundcets_global_lock);
+  __softboundcets_metadata_store(ptr, ((char*) base_ptr - 128),
+                                      ((char*) base_ptr + 255 + 1), 1,
+                                      __softboundcets_global_lock);
 
 #endif // defined(__linux__)
 }
@@ -468,24 +489,19 @@ extern int softboundcets_main(int argc, char **argv);
 int main(int argc, char **argv) {
 
   char** new_argv = argv;
-  int i;
-  char* temp_ptr;
-  int return_value;
   size_t argv_key;
   void* argv_loc;
 
-  int* temp = malloc(1);
+  int* temp = (int*)malloc(1);
   __softboundcets_malloc_start_address = temp;
   __softboundcets_allocation_secondary_trie_allocate_range(0, (size_t)temp);
-
   __softboundcets_stack_memory_allocation(&argv_loc, &argv_key);
 
 #if defined(__linux__)
   mallopt(M_MMAP_MAX, 0);
 #endif
 
-  for(i = 0; i < argc; i++) {
-
+  for(int i = 0; i < argc; i++) {
     __softboundcets_metadata_store(&new_argv[i],
                                    new_argv[i],
                                    new_argv[i] + strlen(new_argv[i]) + 1,
@@ -494,22 +510,17 @@ int main(int argc, char **argv) {
 
   softboundcets_init_ctype();
 
-  /* Santosh: Real Nasty hack because C programmers assume argv[argc]
-   * to be NULL. Also this NUll is a pointer, doing + 1 will make the
-   * size_of_type to fail
-   */
-  temp_ptr = ((char*) &new_argv[argc]) + 8;
+  // Santosh: Real Nasty Hack because C programmers assume argv[argc] is NULL.
 
-  /* &new_argv[0], temp_ptr, argv_key, argv_loc * the metadata */
+  char* temp_ptr = ((char*) &new_argv[argc]) + sizeof(char*);
 
   __softboundcets_allocate_shadow_stack_space(2);
   __softboundcets_store_base_shadow_stack(&new_argv[0], 1);
   __softboundcets_store_bound_shadow_stack(temp_ptr, 1);
   __softboundcets_store_key_shadow_stack(argv_key, 1);
   __softboundcets_store_lock_shadow_stack(argv_loc, 1);
-  return_value = softboundcets_main(argc, new_argv);
+  int return_value = softboundcets_main(argc, new_argv);
   __softboundcets_deallocate_shadow_stack_space();
   __softboundcets_stack_memory_deallocation(argv_key);
-
   return return_value;
 }

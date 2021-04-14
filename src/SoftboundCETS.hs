@@ -28,12 +28,11 @@ instrument m = do
       in map (instrumentFunction ifs) defs
 
     functionsToInstrument :: [Definition] -> Set Name
-    functionsToInstrument defs = union (singleton $ mkName "main")
-                                       (difference (fromList $ map getFuncName
-                                                             $ filter isFuncDef
-                                                             $ defs)
-                                                   (union ignoredFunctions
-                                                          wrappedFunctions))
+    functionsToInstrument defs = difference (fromList $ map getFuncName
+                                                      $ filter isFuncDef
+                                                      $ defs)
+                                            (union ignoredFunctions
+                                                   wrappedFunctions)
 
     isFuncDef (GlobalDefinition (Function {})) = True
     isFuncDef _ = False
@@ -44,6 +43,8 @@ instrument m = do
     instrumentFunction ifs g@(GlobalDefinition f@(Function {})) =
       if member (name f) ifs then
         GlobalDefinition $ f { basicBlocks = execIRBuilder emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ instrumentBlocks $ basicBlocks f }
+      else if (name f) == (mkName "main") then
+        GlobalDefinition $ f { name = mkName "softboundcets_main" }
       else g
 
     instrumentFunction _ x = x
