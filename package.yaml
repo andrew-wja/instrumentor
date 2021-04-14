@@ -28,6 +28,7 @@ library:
     - containers
     - llvm-hs
     - llvm-hs-pure
+    - mtl
 
 executables:
   instrumentor:
