@@ -29,7 +29,11 @@ emptySBCETSState = SBCETSState Nothing Data.Map.empty $ Data.Map.fromList [
   ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
   ("__softboundcets_load_bound_shadow_stack", FunctionType (ptr i8) [i32] False),
   ("__softboundcets_load_key_shadow_stack", FunctionType (i64) [i32] False),
-  ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False)
+  ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False),
+  ("__softboundcets_store_base_shadow_stack", FunctionType void [ptr i8, i32] False),
+  ("__softboundcets_store_bound_shadow_stack", FunctionType void [ptr i8, i32] False),
+  ("__softboundcets_store_key_shadow_stack", FunctionType void [i64, i32] False),
+  ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False)
   ]
 
 instrument :: Module -> IO Module
@@ -87,7 +91,7 @@ instrument m = do
 
     instrumentPointerArgs fblabel pms = do
       let pointerArgs = filter isPointerArg pms
-      let shadowStackIndices :: [Integer] = [0..]
+      let shadowStackIndices :: [Integer] = [1..]
       emitBlockStart (mkName "sbcets_parameter_metadata_init")
       mapM_ emitPointerArgumentMetadataLoad $ zip pointerArgs shadowStackIndices
       emitTerm $ Br fblabel []
@@ -151,12 +155,53 @@ instrument m = do
       glp <- call (ConstantOperand $ GlobalReference (ptr fproto) fname) []
       modify $ \s -> s { globalLockPtr = Just glp }
       mapM_ instrumentInst i
-      emitNamedTerm t
+      instrumentTerm t
 
     emitBlock (BasicBlock n i t) = do
       emitBlockStart n
       mapM_ instrumentInst i
-      emitNamedTerm t
+      instrumentTerm t
+
+    -- Location 0 in the shadow stack is for metadata about the return value of
+    -- a function, when that return value is a pointer. When it is not a pointer,
+    -- location 0 in the shadow stack is unused.
+
+    instrumentTerm x@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
+      emitShadowStackInitialization op 0
+      emitNamedTerm x
+
+    instrumentTerm x = emitNamedTerm x
+
+    -- If the pointer is in the metadataTable, emit the shadow stack initialization
+    -- code for the pointer's base, bound, key, and lock, placing them in the
+    -- shadow stack at the specified position.
+
+    emitShadowStackInitialization op ix = do
+      maybeBBKL <- gets (Data.Map.lookup op . metadataTable)
+      case maybeBBKL of
+        (Just (base, bound, key, lock)) -> do
+          ix' <- pure $ int32 ix
+          baseCast <- bitcast base (ptr i8)
+          let baseName = mkName "__softboundcets_store_base_shadow_stack"
+          baseProto <- gets ((! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr baseProto) baseName)
+                    [(baseCast, []), (ix', [])]
+          boundCast <- bitcast bound (ptr i8)
+          let boundName = mkName "__softboundcets_store_bound_shadow_stack"
+          boundProto <- gets ((! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr boundProto) boundName)
+                    [(boundCast, []), (ix', [])]
+          let keyName = mkName "__softboundcets_store_key_shadow_stack"
+          keyProto <- gets ((! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr keyProto) keyName)
+                    [(key, []), (ix', [])]
+          lockCast <- bitcast lock (ptr i8)
+          let lockName = mkName "__softboundcets_store_lock_shadow_stack"
+          lockProto <- gets ((! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr lockProto) lockName)
+                    [(lockCast, []), (ix', [])]
+          return ()
+        Nothing -> return ()
 
     -- We should never see this happen -- "named terminator" is a quirk of LLVM IR
 
