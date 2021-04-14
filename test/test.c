@@ -10,6 +10,10 @@ char * foo() {
   return f;
 }
 
+void bad(char* str) {
+  str[33] = 'x';
+}
+
 int main(int argc, char * argv[]) {
   char * some_ptr = foo();
   char * some_ptr2 = foo();
@@ -19,7 +23,7 @@ int main(int argc, char * argv[]) {
   some_ptr3[2] = '-';
 
   // this should trigger a failure
-  some_ptr2[33] = 'x';
+  bad(some_ptr2);
 
   printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
                                      some_ptr2, some_ptr2,

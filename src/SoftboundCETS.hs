@@ -3,13 +3,14 @@
 module SoftboundCETS (instrument) where
 
 import Control.Monad.State hiding (void)
-import Data.Set hiding (map, filter)
-import Data.Map hiding (map, filter)
+import Data.Set hiding (map, filter, null)
+import Data.Map hiding (map, filter, null)
 import Data.String (IsString(..))
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
 import LLVM.AST.Constant
+import LLVM.IRBuilder.Constant
 import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
@@ -24,7 +25,11 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Data.Map.empty $ Data.Map.fromList [
   ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
-  ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False)
+  ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
+  ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
+  ("__softboundcets_load_bound_shadow_stack", FunctionType (ptr i8) [i32] False),
+  ("__softboundcets_load_key_shadow_stack", FunctionType (i64) [i32] False),
+  ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False)
   ]
 
 instrument :: Module -> IO Module
@@ -58,9 +63,13 @@ instrument m = do
     -- We ignore functions not in the set of functions to instrument, except for "main" which we handle as a special case.
 
     instrumentFunction ifs g@(GlobalDefinition f@(Function {})) =
-      if Data.Set.member (name f) ifs then
-        let builderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
-            builder :: StateT SBCETSState IRBuilder () = instrumentBlocks $ basicBlocks f
+      if (Data.Set.member (name f) ifs) && (not $ null $ basicBlocks f) then
+        let firstBlockLabel = bbName $ head $ basicBlocks f
+            builderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
+            builder :: StateT SBCETSState IRBuilder () = do
+              -- We do not currently instrument pointer parameters to varargs functions
+              when (not $ snd $ parameters f) (instrumentPointerArgs firstBlockLabel $ fst $ parameters f)
+              instrumentBlocks $ basicBlocks f
         in GlobalDefinition $ f { basicBlocks = execIRBuilder builderState $
                                                 flip evalStateT emptySBCETSState $
                                                 builder }
@@ -71,7 +80,42 @@ instrument m = do
 
     instrumentFunction _ x = x
 
-    -- The very first thing we need to do in any function is to call
+    bbName (BasicBlock n _ _) = n
+
+    -- Set up the instrumentation of any pointer arguments to the function, and
+    -- then branch unconditionally to the first block in the function body.
+
+    instrumentPointerArgs fblabel pms = do
+      let pointerArgs = filter isPointerArg pms
+      let shadowStackIndices :: [Integer] = [0..]
+      emitBlockStart (mkName "sbcets_parameter_metadata_init")
+      mapM_ emitPointerArgumentMetadataLoad $ zip pointerArgs shadowStackIndices
+      emitTerm $ Br fblabel []
+      where
+        isPointerArg (Parameter (PointerType _ _) _ _) = True
+        isPointerArg _ = False
+
+    -- Load the metadata for a pointer argument from the shadow stack.
+    -- The location of that metadata in the shadow stack is given by the position
+    -- of the pointer argument in the list of pointer arguments (starting from zero).
+
+    emitPointerArgumentMetadataLoad ((Parameter argType argName _), ix) = do
+      ix' <- pure $ int32 ix
+      let baseName = mkName "__softboundcets_load_base_shadow_stack"
+      baseProto <- gets((! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
+      base <- call (ConstantOperand $ GlobalReference (ptr baseProto) baseName) [(ix', [])]
+      let boundName = mkName "__softboundcets_load_bound_shadow_stack"
+      boundProto <- gets((! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
+      bound <- call (ConstantOperand $ GlobalReference (ptr boundProto) boundName) [(ix', [])]
+      let keyName = mkName "__softboundcets_load_key_shadow_stack"
+      keyProto <- gets((! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
+      key <- call (ConstantOperand $ GlobalReference (ptr keyProto) keyName) [(ix', [])]
+      let lockName = mkName "__softboundcets_load_lock_shadow_stack"
+      lockProto <- gets((! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
+      lock <- call (ConstantOperand $ GlobalReference (ptr lockProto) lockName) [(ix', [])]
+      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (base, bound, key, lock) $ metadataTable s }
+
+    -- The first thing we need to do in the main body of any function is to call
     -- __softboundcets_get_global_lock(), unless the function body is empty
 
     instrumentBlocks [] = return ()
