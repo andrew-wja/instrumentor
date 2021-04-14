@@ -17,11 +17,12 @@ import LLVM.IRBuilder.Internal.SnocList
 import SoftboundCETSDefinitions
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
+                               , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , runtimeFunctionPrototypes :: Map String Type
                                }
 
 emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing $ Data.Map.fromList [
+emptySBCETSState = SBCETSState Nothing Data.Map.empty $ Data.Map.fromList [
   ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
   ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False)
   ]
@@ -75,14 +76,22 @@ instrument m = do
 
     instrumentBlocks [] = return ()
 
+    -- The state of the metadata table is saved prior to instrumenting a function
+    -- and restored immediately afterwards. We can't leak metadata about pointers
+    -- inside a function to the global context, because those pointers might have
+    -- name clashes with pointers in other functions. Saving and restoring the
+    -- metadata table takes care of this nicely.
+
     instrumentBlocks (first:[]) = do
+      savedTable <- gets metadataTable
       emitFirstBlock first
-      modify $ \s -> s { globalLockPtr = Nothing }
+      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable }
 
     instrumentBlocks (first:blocks) = do
+      savedTable <- gets metadataTable
       emitFirstBlock first
       mapM_ emitBlock blocks
-      modify $ \s -> s { globalLockPtr = Nothing }
+      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable }
 
     -- We record the local variable which contains the global lock pointer in
     -- the state variable globalLockPtr. Hereafter `gets globalLockPtr` will
@@ -126,6 +135,7 @@ instrument m = do
         fproto <- gets ((! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname)
                   [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        modify $ \s -> s { metadataTable = Data.Map.insert addr' (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
       | otherwise = emitNamedInst i
