@@ -1,10 +1,12 @@
-module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST) where
+{-# LANGUAGE CPP #-}
+module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST, (!!)) where
 
-import Prelude hiding (readFile, writeFile, print)
+import Prelude hiding ((!!), readFile, writeFile, print)
 import qualified LLVM.AST as AST
 import LLVM.Internal.Context (withContext)
 import LLVM.Internal.Module (withModuleFromLLVMAssembly, moduleLLVMAssembly, withModuleFromBitcode, moduleBitcode, withModuleFromAST, moduleAST, Module(..), File(..))
 import Data.ByteString (readFile, writeFile, ByteString)
+import Data.Map ((!), Map)
 
 readIR :: String -> IO AST.Module
 readIR file = do
@@ -49,3 +51,11 @@ fromAST :: AST.Module -> IO LLVM.Internal.Module.Module
 fromAST m =
   withContext $ (\ctx -> do
     withModuleFromAST ctx m pure)
+
+infixl 9 !!
+
+(!!) :: Ord k => Map k a -> k -> (k, a)
+(!!) m k = (k, m ! k)
+#if __GLASGOW_HASKELL__
+{-# INLINE (!!) #-}
+#endif

@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module SoftboundCETS (instrument) where
 
+import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
 import Data.Set hiding (map, filter, null)
 import Data.Map hiding (map, filter, null)
@@ -16,6 +17,7 @@ import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
 import SoftboundCETSDefinitions
+import Lib
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
@@ -107,18 +109,14 @@ instrument m = do
 
     emitPointerArgumentMetadataLoad ((Parameter argType argName _), ix) = do
       ix' <- pure $ int32 ix
-      let baseName = mkName "__softboundcets_load_base_shadow_stack"
-      baseProto <- gets((! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
-      base <- call (ConstantOperand $ GlobalReference (ptr baseProto) baseName) [(ix', [])]
-      let boundName = mkName "__softboundcets_load_bound_shadow_stack"
-      boundProto <- gets((! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
-      bound <- call (ConstantOperand $ GlobalReference (ptr boundProto) boundName) [(ix', [])]
-      let keyName = mkName "__softboundcets_load_key_shadow_stack"
-      keyProto <- gets((! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
-      key <- call (ConstantOperand $ GlobalReference (ptr keyProto) keyName) [(ix', [])]
-      let lockName = mkName "__softboundcets_load_lock_shadow_stack"
-      lockProto <- gets((! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
-      lock <- call (ConstantOperand $ GlobalReference (ptr lockProto) lockName) [(ix', [])]
+      (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
+      base <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
+      (boundName, boundProto) <- gets((!! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
+      bound <- call (ConstantOperand $ GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
+      (keyName, keyProto) <- gets((!! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
+      key <- call (ConstantOperand $ GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
+      (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
+      lock <- call (ConstantOperand $ GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
       modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (base, bound, key, lock) $ metadataTable s }
 
     -- The first thing we need to do in the main body of any function is to call
@@ -152,9 +150,8 @@ instrument m = do
 
     emitFirstBlock (BasicBlock n i t) = do
       emitBlockStart n
-      let fname = mkName "__softboundcets_get_global_lock"
-      fproto <- gets ((! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
-      glp <- call (ConstantOperand $ GlobalReference (ptr fproto) fname) []
+      (fname, fproto) <- gets ((!! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
+      glp <- call (ConstantOperand $ GlobalReference (ptr fproto) $ mkName fname) []
       modify $ \s -> s { globalLockPtr = Just glp }
       mapM_ instrumentInst i
       instrumentTerm t
@@ -184,23 +181,19 @@ instrument m = do
         (Just (base, bound, key, lock)) -> do
           ix' <- pure $ int32 ix
           baseCast <- bitcast base (ptr i8)
-          let baseName = mkName "__softboundcets_store_base_shadow_stack"
-          baseProto <- gets ((! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ GlobalReference (ptr baseProto) baseName)
+          (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName)
                     [(baseCast, []), (ix', [])]
           boundCast <- bitcast bound (ptr i8)
-          let boundName = mkName "__softboundcets_store_bound_shadow_stack"
-          boundProto <- gets ((! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ GlobalReference (ptr boundProto) boundName)
+          (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr boundProto) $ mkName boundName)
                     [(boundCast, []), (ix', [])]
-          let keyName = mkName "__softboundcets_store_key_shadow_stack"
-          keyProto <- gets ((! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ GlobalReference (ptr keyProto) keyName)
+          (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr keyProto) $ mkName keyName)
                     [(key, []), (ix', [])]
           lockCast <- bitcast lock (ptr i8)
-          let lockName = mkName "__softboundcets_store_lock_shadow_stack"
-          lockProto <- gets ((! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ GlobalReference (ptr lockProto) lockName)
+          (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr lockProto) $ mkName lockName)
                     [(lockCast, []), (ix', [])]
           return ()
         Nothing -> return ()
@@ -222,9 +215,8 @@ instrument m = do
         key <- alloca (i64) Nothing 8
         lock <- alloca (ptr i8) Nothing 8
         addr' <- bitcast addr (ptr i8)
-        let fname = mkName "__softboundcets_metadata_load"
-        fproto <- gets ((! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname)
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
         modify $ \s -> s { metadataTable = Data.Map.insert addr' (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
@@ -244,16 +236,14 @@ instrument m = do
 
     emitShadowStackAllocation numArgs = do
       numArgs' <- pure $ int32 numArgs
-      let fname = mkName "__softboundcets_allocate_shadow_stack_space"
-      fproto <- gets ((! "__softboundcets_allocate_shadow_stack_space") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname)
+      (fname, fproto) <- gets ((!! "__softboundcets_allocate_shadow_stack_space") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) $ mkName fname)
                 [(numArgs', [])]
       return ()
 
     emitShadowStackDeallocation = do
-      let fname = mkName "__softboundcets_deallocate_shadow_stack_space"
-      fproto <- gets ((! "__softboundcets_deallocate_shadow_stack_space") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname) []
+      (fname, fproto) <- gets ((!! "__softboundcets_deallocate_shadow_stack_space") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) $ mkName fname) []
       return ()
 
     emitNamedInst (n := i) = do
