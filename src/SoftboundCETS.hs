@@ -95,19 +95,19 @@ instrument m = do
       let pointerArgs = filter isPointerArg pms
       let shadowStackIndices :: [Integer] = [1..]
       emitBlockStart (mkName "sbcets_parameter_metadata_init")
-      mapM_ emitPointerArgumentMetadataLoad $ zip pointerArgs shadowStackIndices
+      zipWithM_ emitPointerParameterMetadataLoad pointerArgs shadowStackIndices
       emitTerm $ Br fblabel []
       where
         isPointerArg (Parameter (PointerType _ _) _ _) = True
         isPointerArg _ = False
 
-    -- Load the metadata for a pointer argument from the shadow stack.
+    -- Load the metadata for a pointer function parameter from the shadow stack.
     -- The location of that metadata in the shadow stack is given by the position
     -- of the pointer argument in the list of pointer arguments (starting from one).
     -- The zeroth shadow stack location is reserved for metadata about the return
     -- value, but unused if the return value is not a pointer
 
-    emitPointerArgumentMetadataLoad ((Parameter argType argName _), ix) = do
+    emitPointerParameterMetadataLoad (Parameter argType argName _) ix = do
       ix' <- pure $ int32 ix
       (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
       base <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
@@ -166,7 +166,7 @@ instrument m = do
     -- location 0 in the shadow stack is unused.
 
     instrumentTerm x@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
-      emitShadowStackInitialization op 0
+      emitPointerOperandMetadataStore op 0
       emitNamedTerm x
 
     instrumentTerm x = emitNamedTerm x
@@ -175,7 +175,7 @@ instrument m = do
     -- code for the pointer's base, bound, key, and lock, placing them in the
     -- shadow stack at the specified position.
 
-    emitShadowStackInitialization op ix = do
+    emitPointerOperandMetadataStore op@(LocalReference _ _) ix = do
       maybeBBKL <- gets (Data.Map.lookup op . metadataTable)
       case maybeBBKL of
         (Just (base, bound, key, lock)) -> do
@@ -198,6 +198,24 @@ instrument m = do
           return ()
         Nothing -> return ()
 
+    emitPointerOperandMetadataStore (ConstantOperand _) _ = undefined
+    emitPointerOperandMetadataStore (MetadataOperand _) _ = undefined
+
+    emitPointerOperandMetadataLoad (LocalReference argType argName) ix = do
+      ix' <- pure $ int32 ix
+      (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
+      base <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
+      (boundName, boundProto) <- gets((!! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
+      bound <- call (ConstantOperand $ GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
+      (keyName, keyProto) <- gets((!! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
+      key <- call (ConstantOperand $ GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
+      (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
+      lock <- call (ConstantOperand $ GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
+      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (base, bound, key, lock) $ metadataTable s }
+
+    emitPointerOperandMetadataLoad (ConstantOperand _) _ = undefined
+    emitPointerOperandMetadataLoad (MetadataOperand _) _ = undefined
+
     -- We should never see this happen -- "named terminator" is a quirk of the IR
 
     emitNamedTerm (_ := _) = undefined
@@ -206,7 +224,7 @@ instrument m = do
       modifyBlock $ \bb -> bb
         { partialBlockTerm = Just (Do t) }
 
-    instrumentInst i@(_ := o)
+    instrumentInst i@(v := o)
       -- Instrument a load instruction if it is loading a pointer.
       -- We get the metadata for that pointer by calling __softboundcets_metadata_load()
       | (Load _ addr@(LocalReference (PointerType (PointerType _ _) _) _) _ _ _) <- o = do
@@ -221,10 +239,17 @@ instrument m = do
         modify $ \s -> s { metadataTable = Data.Map.insert addr' (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
-      | (Call _ _ _ (Right (ConstantOperand (GlobalReference {}))) opds _ _) <- o = do
+      | (Call _ _ _ (Right (ConstantOperand (GlobalReference (FunctionType rt _ False) _))) opds _ _) <- o = do
         let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        -- allocate shadow stack space
         emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+        -- write the pointer metadata into the shadow stack
+        zipWithM_ emitPointerOperandMetadataStore ptrArgs [1..]
+        -- call the function
         emitNamedInst i
+        -- read the pointer metadata for the return value if it is a pointer
+        when (isPointerType rt) $ emitPointerOperandMetadataLoad (LocalReference rt v) 0
+        -- deallocate the shadow stack space
         emitShadowStackDeallocation
 
       | otherwise = emitNamedInst i
@@ -233,6 +258,9 @@ instrument m = do
 
     isPointerOperand (LocalReference (PointerType _ _) _) = True
     isPointerOperand _ = False
+
+    isPointerType (PointerType _ _) = True
+    isPointerType _ = False
 
     emitShadowStackAllocation numArgs = do
       numArgs' <- pure $ int32 numArgs
