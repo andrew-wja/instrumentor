@@ -1,8 +1,8 @@
 //=== softboundcets-dummy.c - no-op implementation of public interface functions--*- C -*===//
-// Copyright (c) 2015 Santosh Nagarakatte. All rights reserved.
+// Copyright (c) 2021 Andrew Anderson. All rights reserved.
 
-// Developed by: Santosh Nagarakatte, Rutgers University
-//               http://www.cs.rutgers.edu/~santosh.nagarakatte/softbound/
+// Developed by: Andrew Anderson, Trinity College Dublin
+//               https://scss.tcd.ie/~andersan
 
 // The  SoftBoundCETS project had contributions from:
 // Santosh Nagarakatte, Rutgers University,
@@ -38,6 +38,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // WITH THE SOFTWARE.
 //===---------------------------------------------------------------------===//
+
 #include "softboundcets-internal.h"
 #include "softboundcets-interface.h"
 

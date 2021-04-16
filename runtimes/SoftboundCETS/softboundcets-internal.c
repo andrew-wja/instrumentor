@@ -4,6 +4,9 @@
 // Developed by: Santosh Nagarakatte, Rutgers University
 //               http://www.cs.rutgers.edu/~santosh.nagarakatte/softbound/
 
+// Extended by: Andrew Anderson, Trinity College Dublin
+//              https://scss.tcd.ie/~andersan
+
 // The  SoftBoundCETS project had contributions from:
 // Santosh Nagarakatte, Rutgers University,
 // Milo M K Martin, University of Pennsylvania,
