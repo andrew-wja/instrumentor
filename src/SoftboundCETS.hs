@@ -33,7 +33,9 @@ emptySBCETSState = SBCETSState Nothing Data.Map.empty $ Data.Map.fromList [
   ("__softboundcets_store_base_shadow_stack", FunctionType void [ptr i8, i32] False),
   ("__softboundcets_store_bound_shadow_stack", FunctionType void [ptr i8, i32] False),
   ("__softboundcets_store_key_shadow_stack", FunctionType void [i64, i32] False),
-  ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False)
+  ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False),
+  ("__softboundcets_allocate_shadow_stack_space", FunctionType void [i32] False),
+  ("__softboundcets_deallocate_shadow_stack_space", FunctionType void [] False)
   ]
 
 instrument :: Module -> IO Module
@@ -67,19 +69,17 @@ instrument m = do
     -- We ignore functions not in the set of functions to instrument, except for "main" which we handle as a special case.
 
     instrumentFunction ifs g@(GlobalDefinition f@(Function {})) =
-      if (Data.Set.member (name f) ifs) && (not $ null $ basicBlocks f) then
+      if (Data.Set.member (name f) ifs || (name f) == (mkName "main")) && (not $ null $ basicBlocks f) then
         let firstBlockLabel = bbName $ head $ basicBlocks f
             builderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
             builder :: StateT SBCETSState IRBuilder () = do
               -- We do not currently instrument pointer parameters to varargs functions
               when (not $ snd $ parameters f) (instrumentPointerArgs firstBlockLabel $ fst $ parameters f)
               instrumentBlocks $ basicBlocks f
-        in GlobalDefinition $ f { basicBlocks = execIRBuilder builderState $
+        in GlobalDefinition $ f { name = if (name f) == (mkName "main") then mkName "softboundcets_main" else name f
+                                , basicBlocks = execIRBuilder builderState $
                                                 flip evalStateT emptySBCETSState $
                                                 builder }
-      else if (name f) == (mkName "main") then
-        GlobalDefinition $ f { name = mkName "softboundcets_main" }
-
       else g
 
     instrumentFunction _ x = x
@@ -101,7 +101,9 @@ instrument m = do
 
     -- Load the metadata for a pointer argument from the shadow stack.
     -- The location of that metadata in the shadow stack is given by the position
-    -- of the pointer argument in the list of pointer arguments (starting from zero).
+    -- of the pointer argument in the list of pointer arguments (starting from one).
+    -- The zeroth shadow stack location is reserved for metadata about the return
+    -- value, but unused if the return value is not a pointer
 
     emitPointerArgumentMetadataLoad ((Parameter argType argName _), ix) = do
       ix' <- pure $ int32 ix
@@ -203,7 +205,7 @@ instrument m = do
           return ()
         Nothing -> return ()
 
-    -- We should never see this happen -- "named terminator" is a quirk of LLVM IR
+    -- We should never see this happen -- "named terminator" is a quirk of the IR
 
     emitNamedTerm (_ := _) = undefined
 
@@ -227,9 +229,32 @@ instrument m = do
         modify $ \s -> s { metadataTable = Data.Map.insert addr' (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
+      | (Call _ _ _ (Right (ConstantOperand (GlobalReference {}))) opds _ _) <- o = do
+        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+        emitNamedInst i
+        emitShadowStackDeallocation
+
       | otherwise = emitNamedInst i
 
     instrumentInst i = emitNamedInst i
+
+    isPointerOperand (LocalReference (PointerType _ _) _) = True
+    isPointerOperand _ = False
+
+    emitShadowStackAllocation numArgs = do
+      numArgs' <- pure $ int32 numArgs
+      let fname = mkName "__softboundcets_allocate_shadow_stack_space"
+      fproto <- gets ((! "__softboundcets_allocate_shadow_stack_space") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname)
+                [(numArgs', [])]
+      return ()
+
+    emitShadowStackDeallocation = do
+      let fname = mkName "__softboundcets_deallocate_shadow_stack_space"
+      fproto <- gets ((! "__softboundcets_deallocate_shadow_stack_space") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ GlobalReference (ptr fproto) fname) []
+      return ()
 
     emitNamedInst (n := i) = do
       modifyBlock $ \bb -> bb
