@@ -5,4 +5,5 @@ test.s
 instrumented
 instrumented.bc
 instrumented.ll
+instrumented.alt.ll
 instrumented.s

@@ -180,23 +180,39 @@ instrument m = do
       case maybeBBKL of
         (Just (base, bound, key, lock)) -> do
           ix' <- pure $ int32 ix
-          baseCast <- bitcast base (ptr i8)
           (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName)
-                    [(baseCast, []), (ix', [])]
-          boundCast <- bitcast bound (ptr i8)
+                    [(base, []), (ix', [])]
           (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ GlobalReference (ptr boundProto) $ mkName boundName)
-                    [(boundCast, []), (ix', [])]
+                    [(bound, []), (ix', [])]
           (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ GlobalReference (ptr keyProto) $ mkName keyName)
                     [(key, []), (ix', [])]
-          lockCast <- bitcast lock (ptr i8)
           (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ GlobalReference (ptr lockProto) $ mkName lockName)
-                    [(lockCast, []), (ix', [])]
+                    [(lock, []), (ix', [])]
           return ()
-        Nothing -> return ()
+        Nothing -> do
+          -- use default metadata because the pointer is not tracked
+          ix' <- pure $ int32 ix
+          base <- inttoptr (int8 0) (ptr i8)
+          (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr baseProto) $ mkName baseName)
+                    [(base, []), (ix', [])]
+          bound <- inttoptr (int8 0) (ptr i8)
+          (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr boundProto) $ mkName boundName)
+                    [(bound, []), (ix', [])]
+          key <- pure $ int64 0
+          (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr keyProto) $ mkName keyName)
+                    [(key, []), (ix', [])]
+          lock <- inttoptr (int8 0) (ptr i8)
+          (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ GlobalReference (ptr lockProto) $ mkName lockName)
+                    [(lock, []), (ix', [])]
+          return ()
 
     emitPointerOperandMetadataStore (ConstantOperand _) _ = undefined
     emitPointerOperandMetadataStore (MetadataOperand _) _ = undefined
@@ -227,7 +243,7 @@ instrument m = do
     instrumentInst i@(v := o)
       -- Instrument a load instruction if it is loading a pointer.
       -- We get the metadata for that pointer by calling __softboundcets_metadata_load()
-      | (Load _ addr@(LocalReference (PointerType (PointerType _ _) _) _) _ _ _) <- o = do
+      | (Load _ addr@(LocalReference (PointerType (PointerType ty _) _) _) _ _ _) <- o = do
         base <- alloca (ptr i8) Nothing 8
         bound <- alloca (ptr i8) Nothing 8
         key <- alloca (i64) Nothing 8
@@ -236,7 +252,7 @@ instrument m = do
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
-        modify $ \s -> s { metadataTable = Data.Map.insert addr' (base, bound, key, lock) $ metadataTable s }
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
       | (Call _ _ _ (Right (ConstantOperand (GlobalReference (FunctionType rt _ False) _))) opds _ _) <- o = do

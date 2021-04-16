@@ -16,6 +16,10 @@ instrumented.bc: test.bc
 instrumented.ll: instrumented.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH llvm-dis instrumented.bc -o instrumented.ll
 
+instrumented.alt.ll: test.ll
+	cp test.ll instrumented.alt.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH stack exec -- instrumentor instrumented.alt.ll
+
 instrumented.s: instrumented.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 instrumented.bc -S -o instrumented.s
 
