@@ -18,15 +18,17 @@ import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
 import Utils
+import LLVMHSExtensions
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
+                               , wrapperCandidates :: Set Name
                                , runtimeFunctionPrototypes :: Map String Type
                                }
 
 emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing Data.Map.empty Data.Set.empty $
+emptySBCETSState = SBCETSState Nothing Data.Map.empty Data.Set.empty Data.Set.empty $
   Data.Map.fromList [
   ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
   ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
@@ -93,7 +95,6 @@ ignoredFunctions = Data.Set.fromList $ map mkName [
 
 wrappedFunctions :: Set Name
 wrappedFunctions = Data.Set.fromList $ map mkName [
-{-
   "abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
   "ceilf", "ceil", "chdir", "chown", "chroot", "clock", "closedir", "close",
   "cosf", "cosl", "cos", "ctime", "__ctype_b_loc", "__ctype_tolower_loc",
@@ -113,7 +114,6 @@ wrappedFunctions = Data.Set.fromList $ map mkName [
   "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok", "strtol",
   "strtoul", "system", "tanf", "tanl", "tan", "times", "time", "tmpfile",
   "tolower", "toupper", "umask", "unlink", "write",
--}
   "calloc", "free", "main", "malloc", "mmap", "realloc" ]
 
 instrument :: Module -> IO Module
@@ -123,12 +123,14 @@ instrument m = do
   where
     instrumentDefinitions :: [Definition] -> [Definition]
     instrumentDefinitions defs =
-      let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs }
+      let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs
+                                         , wrapperCandidates = functionsToWrap defs
+                                         }
           irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
           modBuilderState = emptyModuleBuilder
       in execModuleBuilder modBuilderState $
-         execIRBuilderT irBuilderState $
-         flip evalStateT sbcetsState $ do
+         flip evalStateT sbcetsState $
+         execIRBuilderT irBuilderState $ do
            mapM_ emitRuntimeAPIFunctionDecl $ assocs $ runtimeFunctionPrototypes sbcetsState
            mapM_ instrumentDefinition defs
            return ()
@@ -140,36 +142,65 @@ instrument m = do
                                                      (Data.Set.union ignoredFunctions
                                                                      wrappedFunctions)
 
+    functionsToWrap :: [Definition] -> Set Name
+    functionsToWrap defs = Data.Set.intersection (Data.Set.fromList $ map getFuncName
+                                                                  $ filter isFuncDef
+                                                                  $ defs)
+                                                 wrappedFunctions
+
     isFuncDef (GlobalDefinition (Function {})) = True
     isFuncDef _ = False
 
     getFuncName (GlobalDefinition f@(Function {})) = name f
     getFuncName _ = undefined
 
-    emitRuntimeAPIFunctionDecl :: (String, Type) -> StateT SBCETSState (IRBuilderT ModuleBuilder) ()
-    emitRuntimeAPIFunctionDecl (name, (FunctionType retType argTypes _)) = do
-      _ <- extern (mkName name) argTypes retType
+    emitRuntimeAPIFunctionDecl :: (String, Type) -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
+    emitRuntimeAPIFunctionDecl (fname, (FunctionType retType argTypes _)) = do
+      _ <- extern (mkName fname) argTypes retType
       return ()
 
-    instrumentDefinition :: Definition -> StateT SBCETSState (IRBuilderT ModuleBuilder) ()
-    --instrumentDefinition g@(GlobalDefinition f@(Function {})) =
-    --  if (Data.Set.member (name f) ifs || (name f) == (mkName "main")) && (not $ null $ basicBlocks f) then
-    --    let firstBlockLabel = bbName $ head $ basicBlocks f
-    --        builder :: StateT SBCETSState IRBuilder () = do
-    --          -- We do not currently instrument any arguments to varargs functions
-    --          -- (not even the fixed arguments)
-    --          when (not $ snd $ parameters f) (instrumentPointerArgs firstBlockLabel $ fst $ parameters f)
-    --          instrumentBlocks $ basicBlocks f
-    --    in GlobalDefinition $ f { name = if (name f) == (mkName "main") then mkName "softboundcets_main" else name f
-    --                            , basicBlocks = execIRBuilderT builderState $
-    --                                            flip evalStateT sbcetsState $
-    --                                            builder }
-    --  else g
+    emitRuntimeAPIFunctionDecl (_, _) = undefined
+
+    instrumentDefinition :: Definition -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
+    instrumentDefinition g@(GlobalDefinition f@(Function {}))
+      -- Don't instrument empty functions
+      | null $ basicBlocks f = emitDefn g
+      -- We do not currently instrument varargs functions
+      | snd $ parameters f = emitDefn g
+      | otherwise = do
+        shouldInstrument <- gets $ (Data.Set.member $ name f) . instrumentationCandidates
+        shouldWrap <- gets $ (Data.Set.member $ name f) . wrapperCandidates
+
+        if shouldInstrument then do
+          let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
+          let instBody = instrumentFunctionBody f
+          _ <- lift $ functionWithAttrs (name f) params (returnType f) instBody
+          return ()
+
+        else if shouldWrap then do
+          let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
+          let instBody = instrumentFunctionBody f
+          let instName = mkName $ ("softboundcets_" ++) $ show $ name f
+          _ <- lift $ functionWithAttrs instName params (returnType f) instBody
+          return ()
+
+        else emitDefn g
 
     instrumentDefinition x = emitDefn x
 
-{-
+    name2ParamName (Name x) = ParameterName x
+    name2ParamName _ = undefined
+
     bbName (BasicBlock n _ _) = n
+
+    instrumentFunctionBody :: Global -> [Operand] -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
+    instrumentFunctionBody f@(Function {}) _ = do
+      let firstBlockLabel = bbName $ head $ basicBlocks f
+      instrumentPointerArgs firstBlockLabel $ fst $ parameters f
+      instrumentBlocks $ basicBlocks f
+      return ()
+
+    instrumentFunctionBody _ _ = undefined
 
     -- Set up the instrumentation of any pointer arguments to the function, and
     -- then branch unconditionally to the first block in the function body.
@@ -454,4 +485,3 @@ instrument m = do
 
     emitNamedInst (Do i) = do
       emitInstrVoid i
--}
