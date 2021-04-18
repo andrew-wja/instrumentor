@@ -1,6 +1,6 @@
 module Main where
 
-import qualified Lib
+import qualified Utils
 import qualified SoftboundCETS
 
 import Main.Utf8 (withUtf8, withStdTerminalHandles)
@@ -15,14 +15,14 @@ main = withStdTerminalHandles $ withUtf8 $ do
   if (length args) == 1 then do
     let inputFile = head args
     if isSuffixOf ".bc" inputFile then do
-      parsed <- Lib.readBC inputFile
+      parsed <- Utils.readBC inputFile
       instrumented <- SoftboundCETS.instrument parsed
-      Lib.writeBC inputFile instrumented
+      Utils.writeBC inputFile instrumented
       exitSuccess
     else if isSuffixOf ".ll" inputFile then do
-      parsed <- Lib.readIR inputFile
+      parsed <- Utils.readIR inputFile
       instrumented <- SoftboundCETS.instrument parsed
-      Lib.writeIR inputFile instrumented
+      Utils.writeIR inputFile instrumented
       exitSuccess
     else do
       putStrLn ("Invalid input file: " ++ inputFile)

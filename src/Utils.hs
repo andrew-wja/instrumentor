@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP #-}
-module Lib (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST, (!!)) where
+module Utils (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST, (!!)) where
 
 import Prelude hiding ((!!), readFile, writeFile, print)
 import qualified LLVM.AST as AST

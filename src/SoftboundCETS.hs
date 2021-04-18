@@ -17,12 +17,11 @@ import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
-import SoftboundCETSDefinitions
-import Lib
+import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-                               , stackAllocations :: Set Name
+                               , instrumentationCandidates :: Set Name
                                , runtimeFunctionPrototypes :: Map String Type
                                }
 
@@ -47,20 +46,92 @@ emptySBCETSState = SBCETSState Nothing Data.Map.empty Data.Set.empty $
   ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False)
   ]
 
+ignoredFunctions :: Set Name
+ignoredFunctions = Data.Set.fromList $ map mkName [
+  "asprintf", "compare_pic_by_pic_num_desc", "dup2", "dup", "error", "execlp",
+  "execl", "execv", "_exit", "fcntl", "fflush_unlocked", "flockfile", "fork",
+  "__fpending", "fprintf", "fscanf", "full_write", "funlockfile",
+  "fwrite_unlocked", "__hashProbeAddrOfPtr", "ioctl", "_IO_getc", "_IO_putc",
+  "longjmp", "__memcopyCheck_i64", "__memcopyCheck", "__option_is_short",
+  "__overflow", "pipe", "printf", "puts", "safe_calloc", "safe_free",
+  "safe_malloc", "safe_mmap", "safe_read", "scanf", "select", "_setjmp",
+  "setuid", "__shrinkBounds", "snprintf", "__softboundcets_abort",
+  "__softboundcets_add_to_free_map", "__softboundcets_allocate_lock_location",
+  "__softboundcets_allocate_shadow_stack_space",
+  "__softboundcets_allocation_secondary_trie_allocate_range",
+  "__softboundcets_allocation_secondary_trie_allocate",
+  "__SOFTBOUNDCETS_ASSERT_fail", "SOFTBOUNDCETS_ASSERT",
+  "__softboundcets_check_remove_from_free_map",
+  "__softboundcets_copy_metadata",
+  "__softboundcets_deallocate_shadow_stack_space", "__softboundcets_dummy",
+  "__softboundcets_get_global_lock", "__softboundcets_global_init",
+  "__softboundcets_init", "__softboundcets_intermediate",
+  "__softboundcets_introspect_metadata",
+  "__softboundcets_load_base_shadow_stack",
+  "__softboundcets_load_bound_shadow_stack",
+  "__softboundcets_load_key_shadow_stack",
+  "__softboundcets_load_lock_shadow_stack", "__softboundcets_memcopy_check",
+  "__softboundcets_memory_allocation", "__softboundcets_memory_deallocation",
+  "__softboundcets_metadata_load", "__softboundcets_metadata_load_vector",
+  "__softboundcets_metadata_store", "__softboundcets_metadata_store_vector",
+  "__softboundcets_printf", "__softboundcets_print_metadata",
+  "__softboundcets_spatial_call_dereference_check",
+  "__softboundcets_spatial_load_dereference_check",
+  "__softboundcets_spatial_store_dereference_check",
+  "__softboundcets_stack_memory_allocation",
+  "__softboundcets_stack_memory_deallocation",
+  "__softboundcets_store_base_shadow_stack",
+  "__softboundcets_store_bound_shadow_stack",
+  "__softboundcets_store_key_shadow_stack",
+  "__softboundcets_store_lock_shadow_stack", "__softboundcets_stub",
+  "__softboundcets_temporal_load_dereference_check",
+  "__softboundcets_temporal_store_dereference_check",
+  "__softboundcets_trie_allocate", "sprintf", "sscanf", "__strcspn_c2",
+  "__stroul_internal", "__strspn_c2", "__strtod_internal", "__strtol_internal",
+  "__strtoul_internal", "__uflow", "vasprintf", "vfprintf", "vsnprintf",
+  "vsprintf", "waitpid", "wprintf" ]
+
+wrappedFunctions :: Set Name
+wrappedFunctions = Data.Set.fromList $ map mkName [
+{-
+  "abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
+  "ceilf", "ceil", "chdir", "chown", "chroot", "clock", "closedir", "close",
+  "cosf", "cosl", "cos", "ctime", "__ctype_b_loc", "__ctype_tolower_loc",
+  "__ctype_toupper_loc", "difftime", "drand48", "__errno_location", "exit",
+  "exp2", "expf", "exp", "fabsf", "fabs", "fclose", "fdopen", "feof",
+  "ferror", "fflush", "fgetc", "fgets", "fileno", "floorf", "floor",
+  "fopen", "fputc", "fputs", "fread", "fseek", "fstat", "ftell",
+  "ftruncate", "fwrite", "getcwd", "getenv", "getrlimit", "gets",
+  "gettimeofday", "getuid", "isatty", "ldexp", "localtime", "log10", "log",
+  "lrand48", "lseek", "memchr", "memcmp", "mkdir", "mkstemp", "opendir",
+  "open", "pclose", "perror", "popen", "pow", "putchar", "qsort", "rand",
+  "readdir", "read", "remove", "rename", "rewind", "rindex", "rmdir",
+  "select", "setbuf", "setreuid", "setrlimit", "signal", "sinf", "sinl",
+  "sin", "sleep", "sqrtf", "sqrt", "srand48", "srand", "stat", "strcasecmp",
+  "strcat", "strchr", "strcmp", "strcpy", "strcspn", "strdup", "strerror",
+  "strftime", "strlen", "strncasecmp", "strncat", "strncmp", "strncpy",
+  "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok", "strtol",
+  "strtoul", "system", "tanf", "tanl", "tan", "times", "time", "tmpfile",
+  "tolower", "toupper", "umask", "unlink", "write",
+-}
+  "calloc", "free", "main", "malloc", "mmap", "realloc" ]
+
 instrument :: Module -> IO Module
 instrument m = do
-  let sbcModule = buildModule (fromString "softboundcets") sbcetsModule
-  return $ sbcModule { moduleName = moduleName m,
-                       moduleSourceFileName = moduleSourceFileName m,
-                       moduleDataLayout = moduleDataLayout m,
-                       moduleTargetTriple = moduleTargetTriple m,
-                       moduleDefinitions = moduleDefinitions sbcModule ++
-                                           (doInstrumentation $ moduleDefinitions m) }
+  let instrumented = instrumentDefinitions $ moduleDefinitions m
+  return $ m { moduleDefinitions = instrumented }
   where
-    doInstrumentation :: [Definition] -> [Definition]
-    doInstrumentation defs =
-      let ifs = functionsToInstrument defs
-      in map (instrumentFunction ifs) defs
+    instrumentDefinitions :: [Definition] -> [Definition]
+    instrumentDefinitions defs =
+      let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs }
+          irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
+          modBuilderState = emptyModuleBuilder
+      in execModuleBuilder modBuilderState $
+         execIRBuilderT irBuilderState $
+         flip evalStateT sbcetsState $ do
+           mapM_ emitRuntimeAPIFunctionDecl $ assocs $ runtimeFunctionPrototypes sbcetsState
+           mapM_ instrumentDefinition defs
+           return ()
 
     functionsToInstrument :: [Definition] -> Set Name
     functionsToInstrument defs = Data.Set.difference (Data.Set.fromList $ map getFuncName
@@ -75,32 +146,30 @@ instrument m = do
     getFuncName (GlobalDefinition f@(Function {})) = name f
     getFuncName _ = undefined
 
-    -- We ignore functions not in the set of functions to instrument, except for "main" which we handle as a special case.
+    emitRuntimeAPIFunctionDecl :: (String, Type) -> StateT SBCETSState (IRBuilderT ModuleBuilder) ()
+    emitRuntimeAPIFunctionDecl (name, (FunctionType retType argTypes _)) = do
+      _ <- extern (mkName name) argTypes retType
+      return ()
 
-    instrumentFunction ifs g@(GlobalDefinition f@(Function {})) =
-      if (Data.Set.member (name f) ifs || (name f) == (mkName "main")) && (not $ null $ basicBlocks f) then
-        let firstBlockLabel = bbName $ head $ basicBlocks f
-            stackAllocs = getStackAllocations $ basicBlocks f
-            sbcetsState = emptySBCETSState { stackAllocations = stackAllocs }
-            builderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
-            builder :: StateT SBCETSState IRBuilder () = do
-              -- We do not currently instrument pointer parameters to varargs functions
-              when (not $ snd $ parameters f) (instrumentPointerArgs firstBlockLabel $ fst $ parameters f)
-              instrumentBlocks $ basicBlocks f
-        in GlobalDefinition $ f { name = if (name f) == (mkName "main") then mkName "softboundcets_main" else name f
-                                , basicBlocks = execIRBuilder builderState $
-                                                flip evalStateT sbcetsState $
-                                                builder }
-      else g
+    instrumentDefinition :: Definition -> StateT SBCETSState (IRBuilderT ModuleBuilder) ()
+    --instrumentDefinition g@(GlobalDefinition f@(Function {})) =
+    --  if (Data.Set.member (name f) ifs || (name f) == (mkName "main")) && (not $ null $ basicBlocks f) then
+    --    let firstBlockLabel = bbName $ head $ basicBlocks f
+    --        builder :: StateT SBCETSState IRBuilder () = do
+    --          -- We do not currently instrument any arguments to varargs functions
+    --          -- (not even the fixed arguments)
+    --          when (not $ snd $ parameters f) (instrumentPointerArgs firstBlockLabel $ fst $ parameters f)
+    --          instrumentBlocks $ basicBlocks f
+    --    in GlobalDefinition $ f { name = if (name f) == (mkName "main") then mkName "softboundcets_main" else name f
+    --                            , basicBlocks = execIRBuilderT builderState $
+    --                                            flip evalStateT sbcetsState $
+    --                                            builder }
+    --  else g
 
-    instrumentFunction _ x = x
+    instrumentDefinition x = emitDefn x
 
+{-
     bbName (BasicBlock n _ _) = n
-
-    getStackAllocations bbs = Data.Set.fromList $ map fromJust $ filter isJust $
-      map (\inst -> case inst of { (v := (Alloca {})) -> Just v;
-                                   _ -> Nothing }) $
-          concat $ map (\(BasicBlock _ i _) -> i) bbs
 
     -- Set up the instrumentation of any pointer arguments to the function, and
     -- then branch unconditionally to the first block in the function body.
@@ -255,34 +324,31 @@ instrument m = do
         { partialBlockTerm = Just (Do t) }
 
     instrumentInst i@(v := o)
-      -- Instrument a load instruction if it is loading a pointer from the heap.
-      | (Load _ addr@(LocalReference (PointerType (PointerType ty _) _) ptrName) _ _ _) <- o = do
-        stackAllocated <- gets (Data.Set.member ptrName . stackAllocations)
-        when (not stackAllocated) $ do
-          base <- alloca (ptr i8) Nothing 8
-          bound <- alloca (ptr i8) Nothing 8
-          key <- alloca (i64) Nothing 8
-          lock <- alloca (ptr i8) Nothing 8
-          addr' <- bitcast addr (ptr i8)
-          -- Get the metadata for the load address by calling __softboundcets_metadata_load()
-          (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                    [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
-          modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-          -- Check that the load is not a spatial memory violation
-          (fname', fproto') <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
-          baseCast <- bitcast base (ptr i8)
-          boundCast <- bitcast bound (ptr i8)
-          tsize <- getSizeOfType ty
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
-          -- Check that the load is not a temporal violation
-          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
-          lockCast <- bitcast lock (ptr i8)
-          keyValue <- load key 0
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                    [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
-          return ()
+      -- Instrument a load instruction if it is loading a pointer.
+      | (Load _ addr@(LocalReference (PointerType (PointerType ty _) _) _) _ _ _) <- o = do
+        base <- alloca (ptr i8) Nothing 8
+        bound <- alloca (ptr i8) Nothing 8
+        key <- alloca (i64) Nothing 8
+        lock <- alloca (ptr i8) Nothing 8
+        addr' <- bitcast addr (ptr i8)
+        -- Get the metadata for the load address by calling __softboundcets_metadata_load()
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+        -- Check that the load is not a spatial memory violation
+        (fname', fproto') <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
+        baseCast <- bitcast base (ptr i8)
+        boundCast <- bitcast bound (ptr i8)
+        tsize <- getSizeOfType ty
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
+        -- Check that the load is not a temporal violation
+        (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
+        lockCast <- bitcast lock (ptr i8)
+        keyValue <- load key 0
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                  [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
         -- Emit the load
         emitNamedInst i
 
@@ -329,32 +395,30 @@ instrument m = do
         emitShadowStackDeallocation
 
       -- Instrument a store instruction always
-      | (Store _ addr@(LocalReference (PointerType ty _) ptrName) _ _ _ _) <- o = do
-        stackAllocated <- gets (Data.Set.member ptrName . stackAllocations)
-        when (not stackAllocated) $ do
-          base <- alloca (ptr i8) Nothing 8
-          bound <- alloca (ptr i8) Nothing 8
-          key <- alloca (i64) Nothing 8
-          lock <- alloca (ptr i8) Nothing 8
-          addr' <- bitcast addr (ptr i8)
-          -- Get the metadata for the store address by calling __softboundcets_metadata_load()
-          (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                    [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
-          -- Check that the store is not a spatial memory violation
-          (fname', fproto') <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
-          baseCast <- bitcast base (ptr i8)
-          boundCast <- bitcast bound (ptr i8)
-          tsize <- getSizeOfType ty
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
-          -- Check that the store is not a temporal violation
-          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
-          lockCast <- bitcast lock (ptr i8)
-          keyValue <- load key 0
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                    [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
-          return ()
+      | (Store _ addr@(LocalReference (PointerType ty _) _) _ _ _ _) <- o = do
+        base <- alloca (ptr i8) Nothing 8
+        bound <- alloca (ptr i8) Nothing 8
+        key <- alloca (i64) Nothing 8
+        lock <- alloca (ptr i8) Nothing 8
+        addr' <- bitcast addr (ptr i8)
+        -- Get the metadata for the store address by calling __softboundcets_metadata_load()
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        -- Check that the store is not a spatial memory violation
+        (fname', fproto') <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
+        baseCast <- bitcast base (ptr i8)
+        boundCast <- bitcast bound (ptr i8)
+        tsize <- getSizeOfType ty
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
+        -- Check that the store is not a temporal violation
+        (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
+        lockCast <- bitcast lock (ptr i8)
+        keyValue <- load key 0
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                  [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
+        return ()
         -- Emit the store
         emitNamedInst i
 
@@ -362,7 +426,8 @@ instrument m = do
 
     getSizeOfType ty = do
       tyNullPtr <- inttoptr (int64 0) (ptr ty)
-      tySzPtr <- emitInstr (ptr ty) $ GetElementPtr False tyNullPtr [int64 1] []
+      -- ~ tySzPtr <- emitInstr (ptr ty) $ GetElementPtr False tyNullPtr [int64 1] []
+      tySzPtr <- gep tyNullPtr [int64 1]
       ptrtoint tySzPtr i64
 
     isPointerOperand (LocalReference (PointerType _ _) _) = True
@@ -389,3 +454,4 @@ instrument m = do
 
     emitNamedInst (Do i) = do
       emitInstrVoid i
+-}
