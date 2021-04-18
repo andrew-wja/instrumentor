@@ -7,7 +7,6 @@ import Control.Monad.State hiding (void)
 import Data.Set hiding (map, filter, null)
 import Data.Map hiding (map, filter, null)
 import Data.String (IsString(..))
-import Data.Maybe (isJust, fromJust)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -23,7 +22,7 @@ import LLVMHSExtensions
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
-                               , wrapperCandidates :: Set Name
+                               , renamingCandidates :: Set Name
                                , runtimeFunctionPrototypes :: Map String Type
                                }
 
@@ -124,7 +123,7 @@ instrument m = do
     instrumentDefinitions :: [Definition] -> [Definition]
     instrumentDefinitions defs =
       let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs
-                                         , wrapperCandidates = functionsToWrap defs
+                                         , renamingCandidates = functionsToWrap defs
                                          }
           irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
           modBuilderState = emptyModuleBuilder
@@ -169,15 +168,16 @@ instrument m = do
       | snd $ parameters f = emitDefn g
       | otherwise = do
         shouldInstrument <- gets $ (Data.Set.member $ name f) . instrumentationCandidates
-        shouldWrap <- gets $ (Data.Set.member $ name f) . wrapperCandidates
+        shouldRename <- gets $ (Data.Set.member $ name f) . renamingCandidates
 
+        -- FIXME: how do we avoid remapping function parameter names here?
         if shouldInstrument then do
           let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
           let instBody = instrumentFunctionBody f
           _ <- lift $ functionWithAttrs (name f) params (returnType f) instBody
           return ()
 
-        else if shouldWrap then do
+        else if shouldRename then do
           let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
           let instBody = instrumentFunctionBody f
           let instName = mkName $ ("softboundcets_" ++) $ show $ name f
@@ -189,7 +189,7 @@ instrument m = do
     instrumentDefinition x = emitDefn x
 
     name2ParamName (Name x) = ParameterName x
-    name2ParamName _ = undefined
+    name2ParamName (UnName _) = NoParameterName
 
     bbName (BasicBlock n _ _) = n
 
