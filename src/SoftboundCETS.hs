@@ -441,6 +441,36 @@ instrument m = do
           Nothing -> do
             emitNamedInst i
 
+      | (BitCast addr@(LocalReference _ _) ty' _) <- o = do
+        maybeBBKL <- gets (Data.Map.lookup addr . metadataTable)
+        case maybeBBKL of
+          (Just (base, bound, key, lock)) -> do
+            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty' v) (base, bound, key, lock) $ metadataTable s }
+            emitNamedInst i
+          Nothing -> do
+            emitNamedInst i
+
+      -- If someone is using inttoptr then they forego any kind of protection
+      | (IntToPtr _ ty _) <- o = do
+        base <- inttoptr (int8 0) (ptr i8)
+        bound <- inttoptr (int8 0) (ptr i8)
+        key <- pure $ int64 0
+        lock <- inttoptr (int8 0) (ptr i8)
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+        emitNamedInst i
+
+      -- Instrument a select instruction if it is selecting between two pointers
+      | (Select cond tval@(LocalReference ty@(PointerType {}) _)
+                     fval@(LocalReference (PointerType {}) _) _) <- o = do
+        (tbase, tbound, tkey, tlock) <- gets ((!tval) . metadataTable)
+        (fbase, fbound, fkey, flock) <- gets ((!fval) . metadataTable)
+        base <- select cond tbase fbase
+        bound <- select cond tbound fbound
+        key <- select cond tkey fkey
+        lock <- select cond tlock flock
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+        emitNamedInst i
+
       | otherwise = emitNamedInst i
 
     instrumentInst i@(Do o)
