@@ -7,6 +7,7 @@ import Control.Monad.State hiding (void)
 import Data.Set hiding (map, filter, null)
 import Data.Map hiding (map, filter, null)
 import Data.Maybe (fromJust)
+import Data.List (unzip4)
 import Data.String (IsString(..))
 import LLVM.AST
 import LLVM.AST.Global
@@ -470,6 +471,17 @@ instrument m = do
         lock <- select cond tlock flock
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
+
+      -- Instrument a phi node if the incoming values are pointers
+      | (Phi ty@(PointerType {}) incoming _) <- o = do
+          (ibases, ibounds, ikeys, ilocks) <- liftM unzip4 $ mapM (\(x, _) -> gets ((!x) . metadataTable)) incoming
+          let preds = map snd incoming
+          base <- phi $ zip ibases preds
+          bound <- phi $ zip ibounds preds
+          key <- phi $ zip ikeys preds
+          lock <- phi $ zip ilocks preds
+          modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+          emitNamedInst i
 
       | otherwise = emitNamedInst i
 
