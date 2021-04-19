@@ -6,6 +6,7 @@ import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
 import Data.Set hiding (map, filter, null)
 import Data.Map hiding (map, filter, null)
+import Data.Maybe (fromJust)
 import Data.String (IsString(..))
 import LLVM.AST
 import LLVM.AST.Global
@@ -19,6 +20,8 @@ import LLVM.IRBuilder.Internal.SnocList
 import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
+                               , functionKey :: Maybe Operand
+                               , functionLock :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
                                , renamingCandidates :: Set Name
@@ -26,7 +29,7 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                }
 
 emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing Data.Map.empty Data.Set.empty Data.Set.empty $
+emptySBCETSState = SBCETSState Nothing Nothing Nothing Data.Map.empty Data.Set.empty Data.Set.empty $
   Data.Map.fromList [
   ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
   ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
@@ -43,7 +46,9 @@ emptySBCETSState = SBCETSState Nothing Data.Map.empty Data.Set.empty Data.Set.em
   ("__softboundcets_spatial_load_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
   ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
   ("__softboundcets_spatial_store_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-  ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False)
+  ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
+  ("__softboundcets_stack_memory_allocation", FunctionType void [(ptr $ ptr i8), ptr i64] False),
+  ("__softboundcets_stack_memory_deallocation", FunctionType void [i64] False)
   ]
 
 ignoredFunctions :: Set Name
@@ -239,13 +244,15 @@ instrument m = do
     instrumentBlocks (first:[]) = do
       savedTable <- gets metadataTable
       emitFirstBlock first
-      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable }
+      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable,
+                         functionKey = Nothing, functionLock = Nothing }
 
     instrumentBlocks (first:blocks) = do
       savedTable <- gets metadataTable
       emitFirstBlock first
       mapM_ emitBlock blocks
-      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable }
+      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable,
+                         functionKey = Nothing, functionLock = Nothing }
 
     -- We record the local variable which contains the global lock pointer in
     -- the state variable globalLockPtr. Hereafter `gets globalLockPtr` will
@@ -259,8 +266,28 @@ instrument m = do
       (fname, fproto) <- gets ((!! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
       glp <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname) []
       modify $ \s -> s { globalLockPtr = Just glp }
+      -- Create a local key and lock for entities allocated in this function
+      emitLocalKeyAndLockCreation
       mapM_ instrumentInst i
       instrumentTerm t
+
+    emitLocalKeyAndLockCreation = do
+      keyPtr <- alloca i64 Nothing 8
+      lockPtr <- alloca (ptr i8) Nothing 8
+      (fname, fproto) <- gets ((!! "__softboundcets_stack_memory_allocation") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(lockPtr, []), (keyPtr, [])]
+      key <- load keyPtr 0
+      lock <- load lockPtr 0
+      modify $ \s -> s { functionKey = Just key, functionLock = Just lock }
+      return ()
+
+    emitLocalKeyAndLockDestruction = do
+      localKey <- gets functionKey
+      (fname, fproto) <- gets ((!! "__softboundcets_stack_memory_deallocation") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(fromJust localKey, [])]
+      return ()
 
     emitBlock (BasicBlock n i t) = do
       emitBlockStart n
@@ -272,6 +299,7 @@ instrument m = do
     -- location 0 in the shadow stack is unused.
 
     instrumentTerm x@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
+      emitLocalKeyAndLockDestruction
       emitPointerOperandMetadataStore op 0
       emitNamedTerm x
 
