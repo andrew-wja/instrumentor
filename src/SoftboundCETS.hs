@@ -375,6 +375,18 @@ instrument m = do
         { partialBlockTerm = Just (Do t) }
 
     instrumentInst i@(v := o)
+      -- Instrument alloca instructions always
+      | (Alloca ty count _ _) <- o = do
+        -- we insert the instrumentation after the alloca instruction since we reference the result
+        emitNamedInst i
+        base <- bitcast (LocalReference (ptr ty) v) (ptr i8)
+        intBound <- pure $ case count of { (Just x) -> x; Nothing -> int64 1 }
+        bound <- gep (LocalReference (ptr ty) v) [intBound]
+        key <- liftM fromJust $ gets functionKey
+        lock <- liftM fromJust $ gets functionLock
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference (ptr ty) v) (base, bound, key, lock) $ metadataTable s }
+        return ()
+
       -- Instrument a load instruction if it is loading a pointer.
       | (Load _ addr@(LocalReference (PointerType (PointerType ty _) _) _) _ _ _) <- o = do
         base <- alloca (ptr i8) Nothing 8
@@ -477,7 +489,6 @@ instrument m = do
 
     getSizeOfType ty = do
       tyNullPtr <- inttoptr (int64 0) (ptr ty)
-      -- ~ tySzPtr <- emitInstr (ptr ty) $ GetElementPtr False tyNullPtr [int64 1] []
       tySzPtr <- gep tyNullPtr [int64 1]
       ptrtoint tySzPtr i64
 
