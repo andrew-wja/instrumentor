@@ -17,7 +17,6 @@ import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
 import Utils
-import LLVMHSExtensions
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
@@ -93,27 +92,35 @@ ignoredFunctions = Data.Set.fromList $ map mkName [
   "vsprintf", "waitpid", "wprintf" ]
 
 wrappedFunctions :: Set Name
-wrappedFunctions = Data.Set.fromList $ map mkName [
-  "abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
-  "ceilf", "ceil", "chdir", "chown", "chroot", "clock", "closedir", "close",
-  "cosf", "cosl", "cos", "ctime", "__ctype_b_loc", "__ctype_tolower_loc",
-  "__ctype_toupper_loc", "difftime", "drand48", "__errno_location", "exit",
-  "exp2", "expf", "exp", "fabsf", "fabs", "fclose", "fdopen", "feof",
-  "ferror", "fflush", "fgetc", "fgets", "fileno", "floorf", "floor",
-  "fopen", "fputc", "fputs", "fread", "fseek", "fstat", "ftell",
-  "ftruncate", "fwrite", "getcwd", "getenv", "getrlimit", "gets",
-  "gettimeofday", "getuid", "isatty", "ldexp", "localtime", "log10", "log",
-  "lrand48", "lseek", "memchr", "memcmp", "mkdir", "mkstemp", "opendir",
-  "open", "pclose", "perror", "popen", "pow", "putchar", "qsort", "rand",
-  "readdir", "read", "remove", "rename", "rewind", "rindex", "rmdir",
-  "select", "setbuf", "setreuid", "setrlimit", "signal", "sinf", "sinl",
-  "sin", "sleep", "sqrtf", "sqrt", "srand48", "srand", "stat", "strcasecmp",
-  "strcat", "strchr", "strcmp", "strcpy", "strcspn", "strdup", "strerror",
-  "strftime", "strlen", "strncasecmp", "strncat", "strncmp", "strncpy",
-  "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok", "strtol",
-  "strtoul", "system", "tanf", "tanl", "tan", "times", "time", "tmpfile",
-  "tolower", "toupper", "umask", "unlink", "write",
-  "calloc", "free", "main", "malloc", "mmap", "realloc" ]
+wrappedFunctionNames :: Map Name Name
+(wrappedFunctions, wrappedFunctionNames) =
+  let names = [ "abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
+                "ceilf", "ceil", "chdir", "chown", "chroot", "clock",
+                "closedir", "close", "cosf", "cosl", "cos", "ctime",
+                "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
+                "difftime", "drand48", "__errno_location", "exit", "exp2",
+                "expf", "exp", "fabsf", "fabs", "fclose", "fdopen", "feof",
+                "ferror", "fflush", "fgetc", "fgets", "fileno", "floorf",
+                "floor", "fopen", "fputc", "fputs", "fread", "fseek", "fstat",
+                "ftell", "ftruncate", "fwrite", "getcwd", "getenv",
+                "getrlimit", "gets", "gettimeofday", "getuid", "isatty",
+                "ldexp", "localtime", "log10", "log", "lrand48", "lseek",
+                "memchr", "memcmp", "mkdir", "mkstemp", "opendir", "open",
+                "pclose", "perror", "popen", "pow", "putchar", "qsort", "rand",
+                "readdir", "read", "remove", "rename", "rewind", "rindex",
+                "rmdir", "select", "setbuf", "setreuid", "setrlimit", "signal",
+                "sinf", "sinl", "sin", "sleep", "sqrtf", "sqrt", "srand48",
+                "srand", "stat", "strcasecmp", "strcat", "strchr", "strcmp",
+                "strcpy", "strcspn", "strdup", "strerror", "strftime",
+                "strlen", "strncasecmp", "strncat", "strncmp", "strncpy",
+                "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok",
+                "strtol", "strtoul", "system",
+                "tanf", "tanl", "tan", "times", "time", "tmpfile", "tolower", "toupper",
+                "umask", "unlink", "write", "calloc", "free", "main", "malloc", "mmap",
+                "realloc" ]
+  in (Data.Set.fromList $ map mkName names,
+      Data.Map.fromList $ map (\n -> (mkName n, mkName ("softboundcets_" ++ n))) names)
+
 
 instrument :: Module -> IO Module
 instrument m = do
@@ -123,7 +130,7 @@ instrument m = do
     instrumentDefinitions :: [Definition] -> [Definition]
     instrumentDefinitions defs =
       let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs
-                                         , renamingCandidates = functionsToWrap defs
+                                         , renamingCandidates = Data.Set.singleton $ mkName "main"
                                          }
           irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
           modBuilderState = emptyModuleBuilder
@@ -140,12 +147,6 @@ instrument m = do
                                                                         $ defs)
                                                      (Data.Set.union ignoredFunctions
                                                                      wrappedFunctions)
-
-    functionsToWrap :: [Definition] -> Set Name
-    functionsToWrap defs = Data.Set.intersection (Data.Set.fromList $ map getFuncName
-                                                                  $ filter isFuncDef
-                                                                  $ defs)
-                                                 wrappedFunctions
 
     isFuncDef (GlobalDefinition (Function {})) = True
     isFuncDef _ = False
@@ -169,38 +170,29 @@ instrument m = do
       | otherwise = do
         shouldInstrument <- gets $ (Data.Set.member $ name f) . instrumentationCandidates
         shouldRename <- gets $ (Data.Set.member $ name f) . renamingCandidates
-
-        -- FIXME: how do we avoid remapping function parameter names here?
-        if shouldInstrument then do
-          let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
-          let instBody = instrumentFunctionBody f
-          _ <- lift $ functionWithAttrs (name f) params (returnType f) instBody
-          return ()
-
-        else if shouldRename then do
-          let params = map (\(Parameter a b c) -> (a, name2ParamName b, c)) $ fst $ parameters f
-          let instBody = instrumentFunctionBody f
-          let instName = mkName $ ("softboundcets_" ++) $ show $ name f
-          _ <- lift $ functionWithAttrs instName params (returnType f) instBody
-          return ()
-
+        if shouldInstrument || shouldRename then do
+          instrumentFunction shouldRename f
         else emitDefn g
 
     instrumentDefinition x = emitDefn x
 
-    name2ParamName (Name x) = ParameterName x
-    name2ParamName (UnName _) = NoParameterName
-
     bbName (BasicBlock n _ _) = n
 
-    instrumentFunctionBody :: Global -> [Operand] -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
-    instrumentFunctionBody f@(Function {}) _ = do
+    instrumentFunction :: Bool -> Global -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
+    instrumentFunction shouldRename f@(Function {}) = do
+      let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
       let firstBlockLabel = bbName $ head $ basicBlocks f
-      instrumentPointerArgs firstBlockLabel $ fst $ parameters f
-      instrumentBlocks $ basicBlocks f
+      (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
+        instrumentPointerArgs firstBlockLabel $ fst $ parameters f
+        instrumentBlocks $ basicBlocks f
+        return ()
+      let def = GlobalDefinition $ f { name = name'
+                                     , basicBlocks = blocks
+                                     }
+      emitDefn def
       return ()
 
-    instrumentFunctionBody _ _ = undefined
+    instrumentFunction _ _ = undefined
 
     -- Set up the instrumentation of any pointer arguments to the function, and
     -- then branch unconditionally to the first block in the function body.
