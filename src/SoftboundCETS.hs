@@ -4,11 +4,13 @@ module SoftboundCETS (instrument) where
 
 import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
+import Control.Monad.RWS hiding (void)
 import Data.Set hiding (map, filter, null)
 import Data.Map hiding (map, filter, null)
-import Data.Maybe (fromJust)
+import Data.Maybe (isJust, fromJust)
 import Data.List (unzip4)
 import Data.String (IsString(..))
+import Data.Text.Lazy (unpack)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -18,6 +20,7 @@ import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
+import LLVM.Pretty (ppll)
 import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
@@ -26,31 +29,44 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
                                , renamingCandidates :: Set Name
+                               , wrapperFunctionPrototypes :: Map String Type
                                , runtimeFunctionPrototypes :: Map String Type
                                }
 
 emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing Nothing Nothing Data.Map.empty Data.Set.empty Data.Set.empty $
-  Data.Map.fromList [
-  ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
-  ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
-  ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
-  ("__softboundcets_load_bound_shadow_stack", FunctionType (ptr i8) [i32] False),
-  ("__softboundcets_load_key_shadow_stack", FunctionType (i64) [i32] False),
-  ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False),
-  ("__softboundcets_store_base_shadow_stack", FunctionType void [ptr i8, i32] False),
-  ("__softboundcets_store_bound_shadow_stack", FunctionType void [ptr i8, i32] False),
-  ("__softboundcets_store_key_shadow_stack", FunctionType void [i64, i32] False),
-  ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False),
-  ("__softboundcets_allocate_shadow_stack_space", FunctionType void [i32] False),
-  ("__softboundcets_deallocate_shadow_stack_space", FunctionType void [] False),
-  ("__softboundcets_spatial_load_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-  ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
-  ("__softboundcets_spatial_store_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-  ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
-  ("__softboundcets_stack_memory_allocation", FunctionType void [(ptr $ ptr i8), ptr i64] False),
-  ("__softboundcets_stack_memory_deallocation", FunctionType void [i64] False)
-  ]
+emptySBCETSState = SBCETSState Nothing Nothing Nothing Data.Map.empty
+                               Data.Set.empty Data.Set.empty
+                               Data.Map.empty Data.Map.empty
+
+initSBCETSState :: SBCETSState
+initSBCETSState = emptySBCETSState
+  { wrapperFunctionPrototypes = Data.Map.fromList [
+    ("softboundcets_malloc", FunctionType (ptr i8) [i64] False),
+    ("softboundcets_free", FunctionType (void) [ptr i8] False)
+    ]
+
+  , runtimeFunctionPrototypes = Data.Map.fromList [
+    ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
+    ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
+    ("__softboundcets_metadata_store", FunctionType void [ptr i8, ptr i8, ptr i8, i64, ptr i8] False),
+    ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
+    ("__softboundcets_load_bound_shadow_stack", FunctionType (ptr i8) [i32] False),
+    ("__softboundcets_load_key_shadow_stack", FunctionType (i64) [i32] False),
+    ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False),
+    ("__softboundcets_store_base_shadow_stack", FunctionType void [ptr i8, i32] False),
+    ("__softboundcets_store_bound_shadow_stack", FunctionType void [ptr i8, i32] False),
+    ("__softboundcets_store_key_shadow_stack", FunctionType void [i64, i32] False),
+    ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False),
+    ("__softboundcets_allocate_shadow_stack_space", FunctionType void [i32] False),
+    ("__softboundcets_deallocate_shadow_stack_space", FunctionType void [] False),
+    ("__softboundcets_spatial_load_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
+    ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
+    ("__softboundcets_spatial_store_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
+    ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
+    ("__softboundcets_stack_memory_allocation", FunctionType void [(ptr $ ptr i8), ptr i64] False),
+    ("__softboundcets_stack_memory_deallocation", FunctionType void [i64] False)
+    ]
+  }
 
 ignoredFunctions :: Set Name
 ignoredFunctions = Data.Set.fromList $ map mkName [
@@ -130,22 +146,25 @@ wrappedFunctionNames :: Map Name Name
 
 instrument :: Module -> IO Module
 instrument m = do
-  let instrumented = instrumentDefinitions $ moduleDefinitions m
+  let (warnings, instrumented) = instrumentDefinitions $ moduleDefinitions m
+  mapM_ (putStrLn . ("instrumentor: "++)) warnings
   return $ m { moduleDefinitions = instrumented }
   where
-    instrumentDefinitions :: [Definition] -> [Definition]
+    instrumentDefinitions :: [Definition] -> ([String], [Definition])
     instrumentDefinitions defs =
-      let sbcetsState = emptySBCETSState { instrumentationCandidates = functionsToInstrument defs
-                                         , renamingCandidates = Data.Set.singleton $ mkName "main"
-                                         }
+      let sbcetsState = initSBCETSState { instrumentationCandidates = functionsToInstrument defs
+                                        , renamingCandidates = Data.Set.singleton $ mkName "main"
+                                        }
           irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
           modBuilderState = emptyModuleBuilder
-      in execModuleBuilder modBuilderState $
-         flip evalStateT sbcetsState $
-         execIRBuilderT irBuilderState $ do
-           mapM_ emitRuntimeAPIFunctionDecl $ assocs $ runtimeFunctionPrototypes sbcetsState
-           mapM_ instrumentDefinition defs
-           return ()
+          ((_, warnings), result) = runModuleBuilder modBuilderState $ do
+                                      (\x -> evalRWST x () sbcetsState) $
+                                        execIRBuilderT irBuilderState $ do
+                                          mapM_ emitRuntimeAPIFunctionDecl $ assocs $ runtimeFunctionPrototypes sbcetsState
+                                          mapM_ emitRuntimeAPIFunctionDecl $ assocs $ wrapperFunctionPrototypes sbcetsState
+                                          mapM_ instrumentDefinition defs
+                                          return ()
+      in (warnings, result)
 
     functionsToInstrument :: [Definition] -> Set Name
     functionsToInstrument defs = Data.Set.difference (Data.Set.fromList $ map getFuncName
@@ -160,14 +179,13 @@ instrument m = do
     getFuncName (GlobalDefinition f@(Function {})) = name f
     getFuncName _ = undefined
 
-    emitRuntimeAPIFunctionDecl :: (String, Type) -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
+    emitRuntimeAPIFunctionDecl :: (String, Type) -> IRBuilderT (RWST () [String] SBCETSState ModuleBuilder) ()
     emitRuntimeAPIFunctionDecl (fname, (FunctionType retType argTypes _)) = do
       _ <- extern (mkName fname) argTypes retType
       return ()
 
     emitRuntimeAPIFunctionDecl (_, _) = undefined
 
-    instrumentDefinition :: Definition -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
     instrumentDefinition g@(GlobalDefinition f@(Function {}))
       -- Don't instrument empty functions
       | null $ basicBlocks f = emitDefn g
@@ -184,7 +202,6 @@ instrument m = do
 
     bbName (BasicBlock n _ _) = n
 
-    instrumentFunction :: Bool -> Global -> IRBuilderT (StateT SBCETSState ModuleBuilder) ()
     instrumentFunction shouldRename f@(Function {}) = do
       let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
       let firstBlockLabel = bbName $ head $ basicBlocks f
@@ -299,12 +316,14 @@ instrument m = do
     -- a function, when that return value is a pointer. When it is not a pointer,
     -- location 0 in the shadow stack is unused.
 
-    instrumentTerm x@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
+    instrumentTerm i@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
       emitLocalKeyAndLockDestruction
       emitPointerOperandMetadataStore op 0
-      emitNamedTerm x
+      emitNamedTerm i
 
-    instrumentTerm x = emitNamedTerm x
+    instrumentTerm i = do
+      tell ["skipping: " ++ (unpack $ ppll i)]
+      emitNamedTerm i
 
     -- If the pointer is in the metadataTable, emit the shadow stack initialization
     -- code for the pointer's base, bound, key, and lock, placing them in the
@@ -375,6 +394,44 @@ instrument m = do
       modifyBlock $ \bb -> bb
         { partialBlockTerm = Just (Do t) }
 
+    getMetadataForPointerLoad v addr@(LocalReference (PointerType pty@(PointerType _ _) _) n) = do
+      isLocal <- gets ((Data.Map.member (LocalReference pty n)) . metadataTable)
+      if isLocal then do
+        gets ((! (LocalReference pty n)) . metadataTable)
+      else do
+        base <- alloca (ptr i8) Nothing 8
+        bound <- alloca (ptr i8) Nothing 8
+        key <- alloca (i64) Nothing 8
+        lock <- alloca (ptr i8) Nothing 8
+        addr' <- bitcast addr (ptr i8)
+        -- Get the metadata for the load address by calling __softboundcets_metadata_load()
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference pty v) (base, bound, key, lock) $ metadataTable s }
+        return (base, bound, key, lock)
+
+    getMetadataForPointerLoad _ _ = undefined
+
+    getMetadataForPointerStore addr@(LocalReference (PointerType _ _) _) = do
+      isLocal <- gets ((Data.Map.member addr) . metadataTable)
+      if isLocal then do
+        gets ((! addr) . metadataTable)
+      else do
+        base <- alloca (ptr i8) Nothing 8
+        bound <- alloca (ptr i8) Nothing 8
+        key <- alloca (i64) Nothing 8
+        lock <- alloca (ptr i8) Nothing 8
+        addr' <- bitcast addr (ptr i8)
+        -- Get the metadata for the store address by calling __softboundcets_metadata_load()
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        modify $ \s -> s { metadataTable = Data.Map.insert addr (base, bound, key, lock) $ metadataTable s }
+        return (base, bound, key, lock)
+
+    getMetadataForPointerStore _ = undefined
+
     instrumentInst i@(v := o)
       -- Instrument alloca instructions always
       | (Alloca ty count _ _) <- o = do
@@ -389,21 +446,13 @@ instrument m = do
         return ()
 
       -- Instrument a load instruction if it is loading a pointer.
-      | (Load _ addr@(LocalReference (PointerType (PointerType ty _) _) _) _ _ _) <- o = do
-        base <- alloca (ptr i8) Nothing 8
-        bound <- alloca (ptr i8) Nothing 8
-        key <- alloca (i64) Nothing 8
-        lock <- alloca (ptr i8) Nothing 8
-        addr' <- bitcast addr (ptr i8)
-        -- Get the metadata for the load address by calling __softboundcets_metadata_load()
-        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+      | (Load _ addr@(LocalReference (PointerType pty@(PointerType ty _) _) n) _ _ _) <- o = do
+        (base, bound, key, lock) <- getMetadataForPointerLoad v addr
         -- Check that the load is not a spatial memory violation
         (fname', fproto') <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
         baseCast <- bitcast base (ptr i8)
         boundCast <- bitcast bound (ptr i8)
+        addr' <- bitcast (LocalReference pty n) (ptr i8)
         tsize <- getSizeOfType ty
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
                   [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
@@ -417,14 +466,16 @@ instrument m = do
         emitNamedInst i
 
       -- Instrument a call instruction unless it is calling inline assembly
-      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (FunctionType rt _ False) _))) opds _ _) <- o = do
+      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
         let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
         -- allocate shadow stack space
         emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
         -- write the pointer metadata into the shadow stack
         zipWithM_ emitPointerOperandMetadataStore ptrArgs [1..]
-        -- call the function
-        emitNamedInst i
+        -- call the function or call the wrapper if there is one
+        if Data.Set.member fname wrappedFunctions then
+          emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
+        else emitNamedInst i
         -- read the pointer metadata for the return value if it is a pointer
         when (isPointerType rt) $ emitPointerOperandMetadataLoad (LocalReference rt v) 0
         -- deallocate the shadow stack space
@@ -463,57 +514,61 @@ instrument m = do
       -- Instrument a select instruction if it is selecting between two pointers
       | (Select cond tval@(LocalReference ty@(PointerType {}) _)
                      fval@(LocalReference (PointerType {}) _) _) <- o = do
-        (tbase, tbound, tkey, tlock) <- gets ((!tval) . metadataTable)
-        (fbase, fbound, fkey, flock) <- gets ((!fval) . metadataTable)
-        base <- select cond tbase fbase
-        bound <- select cond tbound fbound
-        key <- select cond tkey fkey
-        lock <- select cond tlock flock
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-        emitNamedInst i
+        maybeBBKLTrue <- gets (Data.Map.lookup tval . metadataTable)
+        maybeBBKLFalse <- gets (Data.Map.lookup fval . metadataTable)
+
+        case (maybeBBKLTrue, maybeBBKLFalse) of
+          (Just (tbase, tbound, tkey, tlock), Just (fbase, fbound, fkey, flock)) -> do
+            base <- select cond tbase fbase
+            bound <- select cond tbound fbound
+            key <- select cond tkey fkey
+            lock <- select cond tlock flock
+            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+            emitNamedInst i
+          _ -> emitNamedInst i
 
       -- Instrument a phi node if the incoming values are pointers
       | (Phi ty@(PointerType {}) incoming _) <- o = do
-          (ibases, ibounds, ikeys, ilocks) <- liftM unzip4 $ mapM (\(x, _) -> gets ((!x) . metadataTable)) incoming
-          let preds = map snd incoming
-          base <- phi $ zip ibases preds
-          bound <- phi $ zip ibounds preds
-          key <- phi $ zip ikeys preds
-          lock <- phi $ zip ilocks preds
-          modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-          emitNamedInst i
+          maybeBBKLs <- mapM (\x -> gets ((Data.Map.lookup (fst x)) . metadataTable)) incoming
+          if all isJust maybeBBKLs then do
+            let (ibases, ibounds, ikeys, ilocks) = unzip4 $ map fromJust maybeBBKLs
+            let preds = map snd incoming
+            base <- phi $ zip ibases preds
+            bound <- phi $ zip ibounds preds
+            key <- phi $ zip ikeys preds
+            lock <- phi $ zip ilocks preds
+            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+            emitNamedInst i
+          else emitNamedInst i
 
-      | otherwise = emitNamedInst i
+      | otherwise = do
+        tell ["skipping: " ++ (unpack $ ppll i)]
+        emitNamedInst i
 
     instrumentInst i@(Do o)
       -- Instrument a call instruction unless it is calling inline assembly
       -- The return value is not captured, so don't emit checks for it
-      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (FunctionType _ _ False) _))) opds _ _) <- o = do
+      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
         let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
         -- allocate shadow stack space
         emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
         -- write the pointer metadata into the shadow stack
         zipWithM_ emitPointerOperandMetadataStore ptrArgs [1..]
-        -- call the function
-        emitNamedInst i
+        -- call the function or call the wrapper if there is one
+        if Data.Set.member fname wrappedFunctions then
+          emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
+        else emitNamedInst i
         -- deallocate the shadow stack space
         emitShadowStackDeallocation
 
       -- Instrument a store instruction always
       | (Store _ addr@(LocalReference (PointerType ty _) _) _ _ _ _) <- o = do
-        base <- alloca (ptr i8) Nothing 8
-        bound <- alloca (ptr i8) Nothing 8
-        key <- alloca (i64) Nothing 8
-        lock <- alloca (ptr i8) Nothing 8
-        addr' <- bitcast addr (ptr i8)
-        -- Get the metadata for the store address by calling __softboundcets_metadata_load()
-        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+        (base, bound, key, lock) <- getMetadataForPointerStore addr
         -- Check that the store is not a spatial memory violation
         (fname', fproto') <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
         baseCast <- bitcast base (ptr i8)
         boundCast <- bitcast bound (ptr i8)
+        addr' <- bitcast addr (ptr i8)
         tsize <- getSizeOfType ty
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
                   [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
@@ -527,7 +582,9 @@ instrument m = do
         -- Emit the store
         emitNamedInst i
 
-      | otherwise = emitNamedInst i
+      | otherwise = do
+        tell ["skipping: " ++ (unpack $ ppll i)]
+        emitNamedInst i
 
     getSizeOfType ty = do
       tyNullPtr <- inttoptr (int64 0) (ptr ty)
@@ -539,6 +596,11 @@ instrument m = do
 
     isPointerType (PointerType _ _) = True
     isPointerType _ = False
+
+    rewriteCalledFunctionName n (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) =
+      Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
+
+    rewriteCalledFunctionName _ _ = undefined
 
     emitShadowStackAllocation numArgs = do
       numArgs' <- pure $ int32 numArgs

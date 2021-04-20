@@ -23,7 +23,7 @@ int main(int argc, char * argv[]) {
   some_ptr3[2] = '-';
 
   // this should trigger a failure
-  bad(some_ptr2);
+  //~ bad(some_ptr2);
 
   printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
                                      some_ptr2, some_ptr2,
@@ -34,8 +34,8 @@ int main(int argc, char * argv[]) {
   free(some_ptr3);
 
   // this should trigger a failure
-  printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
-                                     some_ptr2, some_ptr2,
-                                     some_ptr3, some_ptr3);
+  //~ printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
+                                     //~ some_ptr2, some_ptr2,
+                                     //~ some_ptr3, some_ptr3);
   return 0;
 }

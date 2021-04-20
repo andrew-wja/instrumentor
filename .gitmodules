@@ -4,3 +4,6 @@
 [submodule "llvm-project"]
 	path = llvm-project
 	url = ./llvm-project/
+[submodule "llvm-hs-pretty"]
+	path = llvm-hs-pretty
+	url = ./llvm-hs-pretty

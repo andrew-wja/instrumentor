@@ -404,7 +404,6 @@ __softboundcets_metadata_store(void* addr_of_ptr,
   primary_index = (ptr >> 25);
   trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
 
-
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
     if(trie_secondary_table == NULL){
       trie_secondary_table =  __softboundcets_trie_allocate();
@@ -422,58 +421,6 @@ __softboundcets_metadata_store(void* addr_of_ptr,
   entry_ptr->lock = lock;
 
   return;
-}
-
-__WEAK__ void*
-__softboundcets_metadata_load_base(void* address) {
-  __softboundcets_trie_entry_t* entry_ptr = (__softboundcets_trie_entry_t*)address;
-  return entry_ptr->base;
-}
-
-__WEAK__ void*
-__softboundcets_metadata_load_bound(void* address) {
-  __softboundcets_trie_entry_t* entry_ptr = (__softboundcets_trie_entry_t*)address;
-  return entry_ptr->bound;
-}
-
-__WEAK__ size_t
-__softboundcets_metadata_load_key(void* address) {
-  __softboundcets_trie_entry_t* entry_ptr = (__softboundcets_trie_entry_t*)address;
-  return entry_ptr->key;
-}
-
-__WEAK__ void*
-__softboundcets_metadata_load_lock(void* address) {
-  __softboundcets_trie_entry_t* entry_ptr = (__softboundcets_trie_entry_t*)address;
-  return entry_ptr->lock;
-}
-
-__WEAK__ void
-__softboundcets_metadata_load_vector(void* addr_of_ptr,
-                                     void** base,
-                                     void** bound,
-                                     size_t* key,
-                                     void** lock,
-                                     int index) {
- size_t val = index * 8;
- size_t addr = (size_t) addr_of_ptr;
- addr = addr + val;
-
- __softboundcets_metadata_load((void*) addr, base, bound, key, lock);
-}
-
-__WEAK__ void
-__softboundcets_metadata_store_vector(void* addr_of_ptr,
-                                      void* base,
-                                      void* bound,
-                                      size_t key,
-                                      void* lock,
-                                      int index) {
- size_t val = index * 8;
- size_t addr = (size_t) addr_of_ptr;
- addr = addr + val;
-
- __softboundcets_metadata_store((void*)addr, base, bound, key, lock);
 }
 
 /* Miscellaneous routines */

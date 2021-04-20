@@ -147,34 +147,6 @@ __softboundcets_metadata_store(void* addr_of_ptr,
                                size_t key,
                                void* lock);
 
-__WEAK__ void*
-__softboundcets_metadata_load_base(void* address);
-
-__WEAK__ void*
-__softboundcets_metadata_load_bound(void* address);
-
-__WEAK__ size_t
-__softboundcets_metadata_load_key(void* address);
-
-__WEAK__ void*
-__softboundcets_metadata_load_lock(void* address);
-
-__WEAK__ void
-__softboundcets_metadata_load_vector(void* addr_of_ptr,
-                                     void** base,
-                                     void** bound,
-                                     size_t* key,
-                                     void** lock,
-                                     int index);
-
-__WEAK__ void
-__softboundcets_metadata_store_vector(void* addr_of_ptr,
-                                      void* base,
-                                      void* bound,
-                                      size_t key,
-                                      void* lock,
-                                      int index);
-
 /* Miscellaneous routines */
 
 __WEAK__ void

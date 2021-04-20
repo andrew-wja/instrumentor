@@ -5,6 +5,7 @@ packages:
 - .
 - ./llvm-hs/llvm-hs
 - ./llvm-hs/llvm-hs-pure
+- ./llvm-hs-pretty
 
 ghc-options:
     "$locals": -Wall
