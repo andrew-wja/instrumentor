@@ -14,6 +14,10 @@ void bad(char* str) {
   str[33] = 'x';
 }
 
+void print(char* str) {
+  printf("%p, %s\n", str, str);
+}
+
 int main(int argc, char * argv[]) {
   char * some_ptr = foo();
   char * some_ptr2 = foo();
@@ -25,17 +29,16 @@ int main(int argc, char * argv[]) {
   // this should trigger a failure
   bad(some_ptr2);
 
-  printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
-                                     some_ptr2, some_ptr2,
-                                     some_ptr3, some_ptr3);
+  print(some_ptr);
+  print(some_ptr2);
+  print(some_ptr3);
 
   free(some_ptr);
   free(some_ptr2);
   free(some_ptr3);
 
   // this should trigger a failure
-  printf("%p, %s\n%p, %s\n%p, %s\n", some_ptr, some_ptr,
-                                     some_ptr2, some_ptr2,
-                                     some_ptr3, some_ptr3);
+  char test = some_ptr[0];
+
   return 0;
 }

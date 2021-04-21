@@ -336,18 +336,22 @@ instrument m = do
       case maybeBBKL of
         (Just (base, bound, key, lock)) -> do
           ix' <- pure $ int32 ix
+          base' <- load base 0
+          bound' <- load bound 0
+          key' <- load key 0
+          lock' <- load lock 0
           (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                    [(base, []), (ix', [])]
+                    [(base', []), (ix', [])]
           (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                    [(bound, []), (ix', [])]
+                    [(bound', []), (ix', [])]
           (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
-                    [(key, []), (ix', [])]
+                    [(key', []), (ix', [])]
           (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
           _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                    [(lock, []), (ix', [])]
+                    [(lock', []), (ix', [])]
           return ()
         Nothing -> do
           -- Pointer is not in the local symbol table; look it up in the runtime
@@ -425,10 +429,12 @@ instrument m = do
       -- Instrument a load instruction
       -- If we're loading a pointer from memory then we also need to load the
       -- metadata for that pointer from the runtime, and record the local variables
-      -- holding that metadata in the symbol table. getMetadataForPointer does this
-      -- so just call it and ignore the result.
-      | (Load _ addr@(LocalReference (PointerType (PointerType _ _) _) _) _ _ _) <- o = do
-        _ <- getMetadataForPointer addr
+      -- holding that metadata in the symbol table.
+      -- Crucially, we also need to *propagate* the metadata so that uses of the
+      -- loaded pointer can also be checked.
+      | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) _) _ _ _) <- o = do
+        (base, bound, key, lock) <- getMetadataForPointer addr
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
       -- Instrument a call instruction unless it is calling inline assembly
