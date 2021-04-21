@@ -476,7 +476,6 @@ __WEAK__ char* softboundcets_strcpy(char* dest, char* src){
   return ret_ptr;
 }
 
-
 __WEAK__ void softboundcets_abort() {
   abort();
 }
@@ -489,23 +488,21 @@ __WEAK__ void softboundcets_abort() {
 
 __WEAK__ int softboundcets_atoi(const char* ptr){
 
-if(ptr == NULL) {
-  __softboundcets_abort();
-}
-return atoi(ptr);
+  if(ptr == NULL) {
+    __softboundcets_abort();
+  }
+  return atoi(ptr);
 }
 
 __WEAK__ void softboundcets_puts(char* ptr){
- puts(ptr);
+  puts(ptr);
 }
 
 __WEAK__ void softboundcets_exit(int status) {
-
   exit(status);
 }
 
 __WEAK__ char*  softboundcets_strtok(char* str, const char* delim){
-
   char* ret_ptr = strtok(str, delim);
   __softboundcets_store_return_metadata((void*)0, (void*)(281474976710656),
                                         1, __softboundcets_global_lock);
@@ -521,7 +518,7 @@ __WEAK__ void __softboundcets_strdup_handler(void* ret_ptr){
   }
   else {
     //    printf("strndup malloced pointer %p\n", ret_ptr);
-    __softboundcets_memory_allocation(ret_ptr, &ptr_lock, &ptr_key);
+    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
     __softboundcets_store_return_metadata(ret_ptr,
                                           (void*)
                                           ((char*)ret_ptr + strlen(ret_ptr) + 1),
@@ -530,8 +527,8 @@ __WEAK__ void __softboundcets_strdup_handler(void* ret_ptr){
 }
 
 //strdup, allocates memory from the system using malloc, thus can be freed
-__WEAK__ char* softboundcets_strndup(const char* s, size_t n){
-
+__WEAK__ char*
+softboundcets_strndup(const char* s, size_t n){
   /* IMP: strndup just copies the string s */
   char* ret_ptr = strndup(s, n);
   __softboundcets_strdup_handler(ret_ptr);
@@ -539,8 +536,8 @@ __WEAK__ char* softboundcets_strndup(const char* s, size_t n){
  }
 
 //strdup, allocates memory from the system using malloc, thus can be freed
-__WEAK__ char* softboundcets_strdup(const char* s){
-
+__WEAK__ char*
+softboundcets_strdup(const char* s){
   /* IMP: strdup just copies the string s */
   void* ret_ptr = strdup(s);
 
@@ -548,16 +545,15 @@ __WEAK__ char* softboundcets_strdup(const char* s){
   return ret_ptr;
 }
 
-__WEAK__ char* softboundcets___strdup(const char* s){
-
+__WEAK__ char*
+softboundcets___strdup(const char* s){
   void* ret_ptr = strdup(s);
   __softboundcets_strdup_handler(ret_ptr);
   return ret_ptr;
 }
 
-
- __WEAK__ char* softboundcets_strcat (char* dest, const char* src){
-
+__WEAK__ char*
+softboundcets_strcat (char* dest, const char* src){
   char* ret_ptr = strcat(dest, src);
   __softboundcets_propagate_metadata_shadow_stack_from(1, 0);
   return ret_ptr;
@@ -587,7 +583,7 @@ softboundcets_strncpy(char* dest, char* src, size_t n){
   }
 
   if(src < src_base || src + n > src_bound){
-    printf("[strncpy] overflow in strncpy with src, src=%px, src_base=%px, src_bound=%px\n", src, src_base, src_bound);
+    printf("[strncpy] overflow in strncpy with src, src=%px, src_base=%px, src_bound=%px\n", (void*)src, (void*)src_base, (void*)src_bound);
     __softboundcets_abort();
   }
 
@@ -641,8 +637,10 @@ __WEAK__ void* softboundcets_realloc(void* ptr, size_t size){
                                          (char*)(ret_ptr) + size,
                                          ptr_key, ptr_lock);
    if(ret_ptr != ptr){
-     __softboundcets_check_remove_from_free_map(ptr_key, ptr);
-     __softboundcets_add_to_free_map(ptr_key, ret_ptr);
+     if(__SOFTBOUNDCETS_FREE_MAP){
+       __softboundcets_check_remove_from_free_map(ptr_key, ptr);
+       __softboundcets_add_to_free_map(ptr_key, ret_ptr);
+     }
      __softboundcets_copy_metadata(ret_ptr, ptr, size);
    }
 
@@ -657,14 +655,14 @@ __WEAK__ void* softboundcets_calloc(size_t nmemb, size_t size) {
  void* ret_ptr = calloc(nmemb, size);
  if(ret_ptr != NULL) {
 
-   __softboundcets_memory_allocation(ret_ptr, &ptr_lock, &ptr_key);
+   __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
    __softboundcets_store_return_metadata(ret_ptr,
                                          ((char*)(ret_ptr) + (nmemb * size)),
                                          ptr_key, ptr_lock);
 
    if(__SOFTBOUNDCETS_FREE_MAP) {
-     //       __softboundcets_add_to_free_map(ptr_key, ret_ptr);
+     __softboundcets_add_to_free_map(ptr_key, ret_ptr);
    }
  }
  else{
@@ -674,8 +672,8 @@ __WEAK__ void* softboundcets_calloc(size_t nmemb, size_t size) {
 }
 
 __WEAK__ void* softboundcets_mmap(void* addr, size_t length,
-                                       int prot, int flags, int fd,
-                                       off_t offset){
+                                  int prot, int flags, int fd,
+                                  off_t offset){
 
   key_type ptr_key=1;
   lock_type ptr_lock=__softboundcets_global_lock;
@@ -704,14 +702,14 @@ __WEAK__ void* softboundcets_malloc(size_t size) {
   }
   else{
 
-    __softboundcets_memory_allocation(ret_ptr, &ptr_lock, &ptr_key);
+    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
     char* ret_bound = ret_ptr + size;
     __softboundcets_store_return_metadata(ret_ptr, ret_bound,
                                           ptr_key, ptr_lock);
 
     if(__SOFTBOUNDCETS_FREE_MAP) {
-       //      __softboundcets_add_to_free_map(ptr_key, ret_ptr);
+       __softboundcets_add_to_free_map(ptr_key, ret_ptr);
     }
   }
   return ret_ptr;
@@ -769,13 +767,13 @@ __WEAK__ void softboundcets_free(void* ptr){
   if(ptr != NULL){
     void* ptr_lock = __softboundcets_load_lock_shadow_stack(1);
     size_t ptr_key = __softboundcets_load_key_shadow_stack(1);
-    __softboundcets_memory_deallocation(ptr_lock, ptr_key);
+    __softboundcets_heap_deallocation(ptr, ptr_lock, ptr_key);
 
     if(__SOFTBOUNDCETS_FREE_MAP){
       __softboundcets_check_remove_from_free_map(ptr_key, ptr);
     }
   }
-   free(ptr);
+  free(ptr);
 }
 
 

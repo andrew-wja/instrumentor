@@ -110,10 +110,10 @@ __WEAK__ void
 __softboundcets_store_lock_shadow_stack(void* lock, int arg_no) {}
 
 __WEAK__ void
-__softboundcets_stack_memory_allocation(void** ptr_lock, size_t* ptr_key) {}
+__softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {}
 
 __WEAK__ void
-__softboundcets_stack_memory_deallocation(size_t ptr_key){}
+__softboundcets_destroy_stack_key(size_t ptr_key){}
 
 /* Metadata routines */
 

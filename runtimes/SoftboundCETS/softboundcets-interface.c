@@ -325,7 +325,7 @@ __softboundcets_store_lock_shadow_stack(void* lock,
 }
 
 __WEAK__ void
-__softboundcets_stack_memory_allocation(void** ptr_lock, size_t* ptr_key) {
+__softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
   size_t temp_id = __softboundcets_key_id_counter++;
   *((size_t**) ptr_lock) = (size_t*)__softboundcets_stack_temporal_space_begin++;
   *((size_t*)ptr_key) = temp_id;
@@ -334,7 +334,7 @@ __softboundcets_stack_memory_allocation(void** ptr_lock, size_t* ptr_key) {
 }
 
 __WEAK__ void
-__softboundcets_stack_memory_deallocation(size_t ptr_key){
+__softboundcets_destroy_stack_key(size_t ptr_key){
   __softboundcets_stack_temporal_space_begin--;
   *(__softboundcets_stack_temporal_space_begin) = 0;
   return;
@@ -388,6 +388,11 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   *((size_t*) key) = entry_ptr->key;
   *((void**) lock) = (void*) entry_ptr->lock;
 
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[metadata_load] ptr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                          addr_of_ptr, entry_ptr->base, entry_ptr->bound,
+                          entry_ptr->key, entry_ptr->lock);
+#endif
   return;
 }
 
@@ -430,9 +435,9 @@ __softboundcets_spatial_call_dereference_check(void* base,
                                                void* bound,
                                                void* ptr) {
   if ((base != bound) && (ptr != base)) {
-    if (__SOFTBOUNDCETS_DEBUG) {
+#if defined(SOFTBOUNDCETS_DEBUG)
       __softboundcets_printf("In Call Dereference Check, base=%p, bound=%p, ptr=%p\n", base, bound, ptr);
-    }
+#endif
     __softboundcets_abort();
   }
   return;

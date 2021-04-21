@@ -70,12 +70,9 @@
 #define SOFTBOUNDCETS_MMAP_FLAGS (MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE)
 #endif
 
-#ifdef __SOFTBOUNDCETS_DEBUG
-#undef __SOFTBOUNDCETS_DEBUG
-static const int __SOFTBOUNDCETS_DEBUG = 1;
+#ifdef SOFTBOUNDCETS_DEBUG
 #define __SOFTBOUNDCETS_NORETURN
 #else
-static const int __SOFTBOUNDCETS_DEBUG = 0;
 #define __SOFTBOUNDCETS_NORETURN __attribute__((__noreturn__))
 #endif
 
@@ -180,10 +177,10 @@ __WEAK__ void
 __softboundcets_check_remove_from_free_map(size_t ptr_key, void* ptr);
 
 __WEAK__ void
-__softboundcets_memory_allocation(void* ptr, void** ptr_lock, size_t* ptr_key);
+__softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key);
 
 __WEAK__ void
-__softboundcets_memory_deallocation(void* ptr_lock, size_t ptr_key);
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t ptr_key);
 
 __WEAK__ void __softboundcets_dummy();
 

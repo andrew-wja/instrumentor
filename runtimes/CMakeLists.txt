@@ -50,6 +50,7 @@ add_definitions(${LLVM_DEFINITIONS})
 #===============================================================================
 # Use the same C++ standard as LLVM does
 set(CMAKE_CXX_STANDARD 14 CACHE STRING "")
+set(CMAKE_C_STANDARD 11 CACHE STRING "")
 
 # Build type
 if (NOT CMAKE_BUILD_TYPE)
@@ -59,7 +60,10 @@ endif()
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
-    -fdiagnostics-color=always -DSOFTBOUNDCETS_ASSERTS")
+    -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
+    -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
 
 # LLVM is normally built without RTTI. Be consistent with that.
 if(NOT LLVM_ENABLE_RTTI)

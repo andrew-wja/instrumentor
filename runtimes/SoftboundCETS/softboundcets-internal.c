@@ -100,10 +100,9 @@ void __softboundcets_init(void)
 
   softboundcets_initialized = 1;
 
-  if (__SOFTBOUNDCETS_DEBUG) {
+#if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("Initializing softboundcets metadata space\n");
-  }
-
+#endif
 
   assert(sizeof(__softboundcets_trie_entry_t) >= 16);
 
@@ -193,23 +192,24 @@ __softboundcets_allocate_lock_location() {
 
   void* temp = NULL;
   if(__softboundcets_lock_next_location == NULL) {
-    if(__SOFTBOUNDCETS_DEBUG) {
-      __softboundcets_printf("[lock_allocate] new_lock_location=%p\n",
+#if defined(SOFTBOUNDCETS_DEBUG)
+      __softboundcets_printf("[allocate_lock_location] new_lock_location=%p\n",
                              __softboundcets_lock_new_location);
 
       if(__softboundcets_lock_new_location  >
          __softboundcets_temporal_space_begin + __SOFTBOUNDCETS_N_TEMPORAL_ENTRIES){
-        __softboundcets_printf("[lock_allocate] out of temporal free entries \n");
+        __softboundcets_printf("[allocate_lock_location] out of temporal free entries \n");
         __softboundcets_abort();
       }
-    }
+#endif
 
     return __softboundcets_lock_new_location++;
   } else {
     temp = __softboundcets_lock_next_location;
-    if(__SOFTBOUNDCETS_DEBUG){
-      __softboundcets_printf("[lock_allocate] next_lock_location=%p\n", temp);
-    }
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+      __softboundcets_printf("[allocate_lock_location] next_lock_location=%p\n", temp);
+#endif
 
     __softboundcets_lock_next_location = *((void**)__softboundcets_lock_next_location);
     return temp;
@@ -331,7 +331,7 @@ __softboundcets_check_remove_from_free_map(size_t ptr_key, void* ptr) {
 }
 
 __WEAK__ void
-__softboundcets_memory_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
+__softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 
   size_t temp_id = __softboundcets_key_id_counter++;
 
@@ -339,23 +339,25 @@ __softboundcets_memory_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
   *((size_t*) ptr_key) = temp_id;
   **((size_t**) ptr_lock) = temp_id;
 
-  __softboundcets_add_to_free_map(temp_id, ptr);
-  //  printf("memory allocation ptr=%zx, ptr_key=%zx\n", ptr, temp_id);
+  if (__SOFTBOUNDCETS_FREE_MAP) {
+    __softboundcets_add_to_free_map(temp_id, ptr);
+  }
+
   __softboundcets_allocation_secondary_trie_allocate(ptr);
 
-  if(__SOFTBOUNDCETS_DEBUG) {
-    __softboundcets_printf("[mem_alloc] lock = %p, ptr_key = %p, key = %zx\n",
-                           ptr_lock, ptr_key, temp_id);
-  }
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_allocation] ptr = %p, lock = %p, key = %zx\n",
+                           ptr, *ptr_lock, temp_id);
+#endif
 }
 
 __WEAK__ void
-__softboundcets_memory_deallocation(void* ptr_lock, size_t ptr_key) {
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t ptr_key) {
 
-  if(__SOFTBOUNDCETS_DEBUG){
-    __softboundcets_printf("[Hdealloc] pointer_lock = %p, *pointer_lock=%zx\n",
-                           ptr_lock, *((size_t*) ptr_lock));
-  }
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
+                           ptr, ptr_lock, *((size_t*) ptr_lock));
+#endif
 
   *((size_t*)ptr_lock) = 0;
   *((void**) ptr_lock) = __softboundcets_lock_next_location;
@@ -491,6 +493,10 @@ extern int softboundcets_main(int argc, char **argv);
 
 int main(int argc, char **argv) {
 
+  if(!softboundcets_initialized){
+    __softboundcets_init();
+  }
+
   char** new_argv = argv;
   size_t argv_key;
   void* argv_loc;
@@ -498,7 +504,7 @@ int main(int argc, char **argv) {
   int* temp = (int*)malloc(1);
   __softboundcets_malloc_start_address = temp;
   __softboundcets_allocation_secondary_trie_allocate_range(0, (size_t)temp);
-  __softboundcets_stack_memory_allocation(&argv_loc, &argv_key);
+  __softboundcets_create_stack_key(&argv_loc, &argv_key);
 
 #if defined(__linux__)
   mallopt(M_MMAP_MAX, 0);
@@ -524,6 +530,6 @@ int main(int argc, char **argv) {
   __softboundcets_store_lock_shadow_stack(argv_loc, 1);
   int return_value = softboundcets_main(argc, new_argv);
   __softboundcets_deallocate_shadow_stack_space();
-  __softboundcets_stack_memory_deallocation(argv_key);
+  __softboundcets_destroy_stack_key(argv_key);
   return return_value;
 }

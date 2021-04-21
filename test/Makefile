@@ -30,4 +30,4 @@ instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump
 
 clean:
-	rm -f test.{bc,ll} test instrumented.{bc,ll,s,dump} instrumented
+	rm -f test.{bc,ll} test instrumented.{alt.ll,bc,ll,s,dump} instrumented
