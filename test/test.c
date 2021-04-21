@@ -38,7 +38,7 @@ int main(int argc, char * argv[]) {
   free(some_ptr3);
 
   // this should trigger a failure
-  char test = some_ptr[0];
+  char test = some_ptr[9];
 
   return 0;
 }
