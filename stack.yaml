@@ -10,7 +10,7 @@ packages:
 ghc-options:
     "$locals": -Wall
     "$targets": -Wall
-    "$everything": -O3 -fllvm
+    "$everything": -O0
 
 extra-lib-dirs: [ llvm-root/lib ]
 

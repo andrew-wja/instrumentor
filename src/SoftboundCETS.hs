@@ -26,6 +26,7 @@ import Utils
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , functionKey :: Maybe Operand
                                , functionLock :: Maybe Operand
+                               , stackAllocations :: Set Name
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
                                , renamingCandidates :: Set Name
@@ -34,7 +35,8 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                }
 
 emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing Nothing Nothing Data.Map.empty
+emptySBCETSState = SBCETSState Nothing Nothing Nothing
+                               Data.Set.empty Data.Map.empty
                                Data.Set.empty Data.Set.empty
                                Data.Map.empty Data.Map.empty
 
@@ -260,17 +262,15 @@ instrument m = do
     -- metadata table takes care of this nicely.
 
     instrumentBlocks (first:[]) = do
-      savedTable <- gets metadataTable
+      saved <- get
       emitFirstBlock first
-      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable,
-                         functionKey = Nothing, functionLock = Nothing }
+      put saved
 
     instrumentBlocks (first:blocks) = do
-      savedTable <- gets metadataTable
+      saved <- get
       emitFirstBlock first
       mapM_ emitBlock blocks
-      modify $ \s -> s { globalLockPtr = Nothing, metadataTable = savedTable,
-                         functionKey = Nothing, functionLock = Nothing }
+      put saved
 
     -- We record the local variable which contains the global lock pointer in
     -- the state variable globalLockPtr. Hereafter `gets globalLockPtr` will
@@ -394,24 +394,24 @@ instrument m = do
       modifyBlock $ \bb -> bb
         { partialBlockTerm = Just (Do t) }
 
-    getMetadataForPointerLoad v addr@(LocalReference (PointerType pty@(PointerType _ _) _) n) = do
-      isLocal <- gets ((Data.Map.member (LocalReference pty n)) . metadataTable)
+    getMetadataForPointerLoad addr@(LocalReference (PointerType _ _) _) = do
+      isLocal <- gets ((Data.Map.member addr) . metadataTable)
       if isLocal then do
-        gets ((! (LocalReference pty n)) . metadataTable)
+        gets ((! addr) . metadataTable)
       else do
         base <- alloca (ptr i8) Nothing 8
         bound <- alloca (ptr i8) Nothing 8
         key <- alloca (i64) Nothing 8
         lock <- alloca (ptr i8) Nothing 8
-        addr' <- bitcast addr (ptr i8)
+        addr' <- gep addr [int64 0]
         -- Get the metadata for the load address by calling __softboundcets_metadata_load()
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference pty v) (base, bound, key, lock) $ metadataTable s }
+        modify $ \s -> s { metadataTable = Data.Map.insert addr (base, bound, key, lock) $ metadataTable s }
         return (base, bound, key, lock)
 
-    getMetadataForPointerLoad _ _ = undefined
+    getMetadataForPointerLoad _ = undefined
 
     getMetadataForPointerStore addr@(LocalReference (PointerType _ _) _) = do
       isLocal <- gets ((Data.Map.member addr) . metadataTable)
@@ -422,7 +422,7 @@ instrument m = do
         bound <- alloca (ptr i8) Nothing 8
         key <- alloca (i64) Nothing 8
         lock <- alloca (ptr i8) Nothing 8
-        addr' <- bitcast addr (ptr i8)
+        addr' <- gep addr [int64 0]
         -- Get the metadata for the store address by calling __softboundcets_metadata_load()
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
@@ -434,36 +434,45 @@ instrument m = do
 
     instrumentInst i@(v := o)
       -- Instrument alloca instructions always
-      | (Alloca ty count _ _) <- o = do
+      | (Alloca {}) <- o = do
+        modify $ \s -> s { stackAllocations = Data.Set.insert v $ stackAllocations s }
+        emitNamedInst i
+        -- FIXME: the code below is generating invalid IR where we deref a non-pointer. Why?
         -- we insert the instrumentation after the alloca instruction since we reference the result
-        emitNamedInst i
-        base <- bitcast (LocalReference (ptr ty) v) (ptr i8)
-        intBound <- pure $ case count of { (Just x) -> x; Nothing -> int64 1 }
-        bound <- gep (LocalReference (ptr ty) v) [intBound]
-        key <- liftM fromJust $ gets functionKey
-        lock <- liftM fromJust $ gets functionLock
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference (ptr ty) v) (base, bound, key, lock) $ metadataTable s }
-        return ()
+        --base <- gep (LocalReference (ptr ty) v) [int64 0]
+        --intBound <- pure $ case count of { (Just x) -> x; Nothing -> int64 1 }
+        --baseAddr <- ptrtoint base i64
+        --tsize <- getSizeOfType ty
+        --boundOffset <- mul intBound tsize
+        --boundAddr <- add baseAddr boundOffset
+        --bound <- inttoptr boundAddr (ptr i8)
+        --key <- liftM fromJust $ gets functionKey
+        --lock <- liftM fromJust $ gets functionLock
+        --modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference (ptr ty) v) (base, bound, key, lock) $ metadataTable s }
+        --return ()
 
-      -- Instrument a load instruction if it is loading a pointer.
-      | (Load _ addr@(LocalReference (PointerType pty@(PointerType ty _) _) n) _ _ _) <- o = do
-        (base, bound, key, lock) <- getMetadataForPointerLoad v addr
-        -- Check that the load is not a spatial memory violation
-        (fname', fproto') <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
-        baseCast <- bitcast base (ptr i8)
-        boundCast <- bitcast bound (ptr i8)
-        addr' <- bitcast (LocalReference pty n) (ptr i8)
-        tsize <- getSizeOfType ty
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                  [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
-        -- Check that the load is not a temporal violation
-        (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
-        lockCast <- bitcast lock (ptr i8)
-        keyValue <- load key 0
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                  [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
-        -- Emit the load
-        emitNamedInst i
+      -- Instrument a load instruction always.
+      | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
+        sourceIsStack <- gets ((Data.Set.member n) . stackAllocations)
+        if not sourceIsStack then do
+          (base, bound, key, lock) <- getMetadataForPointerLoad addr
+          -- Check that the load is not a spatial memory violation
+          (fname', fproto') <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
+          baseCast <- load base 0
+          boundCast <- load bound 0
+          addr' <- bitcast addr (ptr i8)
+          tsize <- getSizeOfType ty
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                    [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
+          -- Check that the load is not a temporal violation
+          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
+          lockCast <- load lock 0
+          keyValue <- load key 0
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                    [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
+          -- Emit the load
+          emitNamedInst i
+        else emitNamedInst i
 
       -- Instrument a call instruction unless it is calling inline assembly
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
@@ -562,25 +571,28 @@ instrument m = do
         emitShadowStackDeallocation
 
       -- Instrument a store instruction always
-      | (Store _ addr@(LocalReference (PointerType ty _) _) _ _ _ _) <- o = do
-        (base, bound, key, lock) <- getMetadataForPointerStore addr
-        -- Check that the store is not a spatial memory violation
-        (fname', fproto') <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
-        baseCast <- bitcast base (ptr i8)
-        boundCast <- bitcast bound (ptr i8)
-        addr' <- bitcast addr (ptr i8)
-        tsize <- getSizeOfType ty
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                  [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
-        -- Check that the store is not a temporal violation
-        (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
-        lockCast <- bitcast lock (ptr i8)
-        keyValue <- load key 0
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                  [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
-        return ()
-        -- Emit the store
-        emitNamedInst i
+      | (Store _ addr@(LocalReference (PointerType ty _) n) _ _ _ _) <- o = do
+        destinationIsStack <- gets ((Data.Set.member n) . stackAllocations)
+        if not destinationIsStack then do
+          (base, bound, key, lock) <- getMetadataForPointerStore addr
+          -- Check that the store is not a spatial memory violation
+          (fname', fproto') <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
+          baseCast <- load base 0
+          boundCast <- load bound 0
+          addr' <- bitcast addr (ptr i8)
+          tsize <- getSizeOfType ty
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                    [(baseCast, []), (boundCast, []), (addr', []), (tsize, [])]
+          -- Check that the store is not a temporal violation
+          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
+          lockCast <- load lock 0
+          keyValue <- load key 0
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                    [(lockCast, []), (keyValue, []), (baseCast, []), (boundCast, [])]
+          return ()
+          -- Emit the store
+          emitNamedInst i
+        else emitNamedInst i
 
       | otherwise = do
         tell ["skipping: " ++ (unpack $ ppll i)]
