@@ -40,5 +40,9 @@ int main(int argc, char * argv[]) {
   // this should trigger a failure
   char test = some_ptr[9];
 
+  print(some_ptr);
+  print(some_ptr2);
+  print(some_ptr3);
+
   return 0;
 }

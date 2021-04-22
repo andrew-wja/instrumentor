@@ -6,8 +6,8 @@ test.bc: test.c
 test.ll: test.c
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -S -o test.ll
 
-test: test.c
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 test.c -o test
+test: test.bc
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 test.bc -o test
 
 instrumented.bc: test.bc
 	cp test.bc instrumented.bc
