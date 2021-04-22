@@ -13,3 +13,6 @@ build-runtimes:
 
 build-instrumentor:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack build
+
+clean:
+	stack clean
