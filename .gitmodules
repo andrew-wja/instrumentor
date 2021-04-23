@@ -1,9 +1,12 @@
 [submodule "llvm-hs"]
 	path = llvm-hs
-	url = ./llvm-hs
+	url = https://github.com/llvm-hs/llvm-hs.git
+	branch = llvm-12-unstable
 [submodule "llvm-project"]
 	path = llvm-project
-	url = ./llvm-project/
+	url = https://github.com/llvm/llvm-project.git
+	branch = release/12.x
 [submodule "llvm-hs-pretty"]
 	path = llvm-hs-pretty
-	url = ./llvm-hs-pretty
+	url = https://github.com/andrew-wja/llvm-hs-pretty.git
+	branch = master
