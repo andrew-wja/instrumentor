@@ -1,5 +1,6 @@
-resolver:
-  url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/9.yaml
+resolver: lts-16.31
+compiler: ghc-8.8.4
+compiler-check: match-exact
 
 packages:
 - .
@@ -8,10 +9,14 @@ packages:
 - ./llvm-hs-pretty
 
 ghc-options:
-    "$locals": -Wall
-    "$targets": -Wall
-    "$everything": -O0
+  "$locals": -Wall
+  "$targets": -Wall
+  "$everything": -O0
 
 extra-lib-dirs: [ llvm-root/lib ]
 
 extra-include-dirs: [ llvm-root/include ]
+
+allow-newer: true
+
+rebuild-ghc-options: true
