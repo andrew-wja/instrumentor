@@ -1,4 +1,4 @@
-.PHONY: clean
+.PHONY: clean run-test run-instrumented
 
 test.bc: test.c
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -o test.bc
@@ -9,16 +9,19 @@ test.ll: test.c
 test: test.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 test.bc -o test
 
+run-test: test
+	./test
+
 instrumented.bc: test.bc
 	cp test.bc instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH stack exec -- instrumentor instrumented.bc
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../dist):$(realpath ../llvm-root/bin):$$PATH instrumentor instrumented.bc
 
 instrumented.ll: instrumented.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH llvm-dis instrumented.bc -o instrumented.ll
 
 instrumented.alt.ll: test.ll
 	cp test.ll instrumented.alt.ll
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH stack exec -- instrumentor instrumented.alt.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../dist):$(realpath ../llvm-root/bin):$$PATH instrumentor instrumented.alt.ll
 
 instrumented.s: instrumented.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 instrumented.bc -S -o instrumented.s
@@ -28,6 +31,9 @@ instrumented: instrumented.bc
 
 instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump
+
+run-instrumented: instrumented
+	LD_LIBRARY_PATH=$(realpath ../runtimes-build/lib) ./instrumented
 
 clean:
 	rm -f test.{bc,ll} test instrumented.{alt.ll,bc,ll,s,dump} instrumented

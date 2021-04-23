@@ -1,4 +1,4 @@
-.PHONY: all ensure-submodules build-llvm build-runtimes build-instrumentor clean
+.PHONY: all ensure-submodules build-llvm build-runtimes build-instrumentor dist/instrumentor clean
 
 all: ensure-submodules build-llvm build-runtimes build-instrumentor
 
@@ -14,5 +14,10 @@ build-runtimes:
 build-instrumentor:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack build
 
+dist/instrumentor: build-instrumentor
+	mkdir -p dist
+	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack --local-bin-path dist install
+
 clean:
+	rm -rf dist
 	stack clean
