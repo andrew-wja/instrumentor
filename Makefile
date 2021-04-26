@@ -1,4 +1,4 @@
-.PHONY: all ensure-submodules build-llvm build-runtimes build-instrumentor dist/instrumentor clean
+.PHONY: all ensure-submodules build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor clean
 
 all: ensure-submodules build-llvm build-runtimes build-instrumentor
 
@@ -8,8 +8,11 @@ ensure-submodules:
 build-llvm:
 	./scripts/build-llvm.sh
 
-build-runtimes:
-	./scripts/build-runtimes.sh
+build-debug-runtimes:
+	./scripts/build-runtimes.sh Debug
+
+build-release-runtimes:
+	./scripts/build-runtimes.sh Release
 
 build-instrumentor:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack build

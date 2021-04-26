@@ -59,11 +59,17 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
     -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
     -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
+
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
+    -fdiagnostics-color=always")
+
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
+    -fdiagnostics-color=always")
 
 # LLVM is normally built without RTTI. Be consistent with that.
 if(NOT LLVM_ENABLE_RTTI)
