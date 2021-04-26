@@ -7,7 +7,7 @@ import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import Data.Set hiding (map, filter, null, foldr)
 import Data.Map hiding (map, filter, null, foldr)
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe (fromJust)
 import Data.List (unzip4)
 import Data.String (IsString(..))
 import Data.Text.Lazy (unpack)
@@ -348,7 +348,7 @@ instrument m = do
         modify $ \s -> s { metadataTable = Data.Map.insert addr (base, bound, key, lock) $ metadataTable s }
         return (base, bound, key, lock)
 
-    getMetadataForPointer _ = undefined
+    getMetadataForPointer x@_ = error $ "getMetadataForPointer: expected pointer but saw " ++ show x
 
     -- Store the pointer's base, bound, key, and lock, on the shadow stack at the specified position.
 
