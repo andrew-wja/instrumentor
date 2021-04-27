@@ -1,8 +1,9 @@
 {-# LANGUAGE CPP #-}
-module Utils (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST, (!!)) where
+module Utils (readIR, printIR, writeIR, readBC, printBC, writeBC, writeBC', toAST, fromAST, verifyAST, (!!)) where
 
 import Prelude hiding ((!!), readFile, writeFile, print)
 import qualified LLVM.AST as AST
+import LLVM.Internal.Analysis (verify)
 import LLVM.Internal.Context (withContext)
 import LLVM.Internal.Module (withModuleFromLLVMAssembly, moduleLLVMAssembly, withModuleFromBitcode, moduleBitcode, withModuleFromAST, moduleAST, Module(..), File(..))
 import Data.ByteString (readFile, writeFile, ByteString)
@@ -51,6 +52,11 @@ fromAST :: AST.Module -> IO LLVM.Internal.Module.Module
 fromAST m =
   withContext $ (\ctx -> do
     withModuleFromAST ctx m pure)
+
+verifyAST :: AST.Module -> IO ()
+verifyAST m = do
+  m' <- fromAST m
+  verify m'
 
 infixl 9 !!
 

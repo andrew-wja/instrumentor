@@ -17,11 +17,13 @@ main = withStdTerminalHandles $ withUtf8 $ do
     if isSuffixOf ".bc" inputFile then do
       parsed <- Utils.readBC inputFile
       instrumented <- SoftboundCETS.instrument parsed
+      Utils.verifyAST instrumented
       Utils.writeBC inputFile instrumented
       exitSuccess
     else if isSuffixOf ".ll" inputFile then do
       parsed <- Utils.readIR inputFile
       instrumented <- SoftboundCETS.instrument parsed
+      Utils.verifyAST instrumented
       Utils.writeIR inputFile instrumented
       exitSuccess
     else do
