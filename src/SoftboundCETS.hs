@@ -470,7 +470,7 @@ instrument m = do
 
       -- Instrument a phi node if the incoming values are pointers
       | (Phi ty@(PointerType {}) incoming _) <- o = do
-          if all isLocalReference incoming then do
+          if all (isLocalReference . fst) incoming then do
             bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
             let (ibases, ibounds, ikeys, ilocks) = unzip4 bbkls
             let preds = map snd incoming
