@@ -43,7 +43,9 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
   { wrapperFunctionPrototypes = Data.Map.fromList [
+    ("softboundcets_calloc", FunctionType (ptr i8) [i64, i64] False),
     ("softboundcets_malloc", FunctionType (ptr i8) [i64] False),
+    ("softboundcets_realloc", FunctionType (ptr i8) [ptr i8, i64] False),
     ("softboundcets_free", FunctionType (void) [ptr i8] False)
     ]
 
@@ -118,30 +120,30 @@ ignoredFunctions = Data.Set.fromList $ map mkName [
 wrappedFunctions :: Set Name
 wrappedFunctionNames :: Map Name Name
 (wrappedFunctions, wrappedFunctionNames) =
-  let names = [ "abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
-                "ceilf", "ceil", "chdir", "chown", "chroot", "clock",
-                "closedir", "close", "cosf", "cosl", "cos", "ctime",
-                "__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
-                "difftime", "drand48", "__errno_location", "exit", "exp2",
-                "expf", "exp", "fabsf", "fabs", "fclose", "fdopen", "feof",
-                "ferror", "fflush", "fgetc", "fgets", "fileno", "floorf",
-                "floor", "fopen", "fputc", "fputs", "fread", "fseek", "fstat",
-                "ftell", "ftruncate", "fwrite", "getcwd", "getenv",
-                "getrlimit", "gets", "gettimeofday", "getuid", "isatty",
-                "ldexp", "localtime", "log10", "log", "lrand48", "lseek",
-                "memchr", "memcmp", "mkdir", "mkstemp", "opendir", "open",
-                "pclose", "perror", "popen", "pow", "putchar", "qsort", "rand",
-                "readdir", "read", "remove", "rename", "rewind", "rindex",
-                "rmdir", "select", "setbuf", "setreuid", "setrlimit", "signal",
-                "sinf", "sinl", "sin", "sleep", "sqrtf", "sqrt", "srand48",
-                "srand", "stat", "strcasecmp", "strcat", "strchr", "strcmp",
-                "strcpy", "strcspn", "strdup", "strerror", "strftime",
-                "strlen", "strncasecmp", "strncat", "strncmp", "strncpy",
-                "strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok",
-                "strtol", "strtoul", "system",
-                "tanf", "tanl", "tan", "times", "time", "tmpfile", "tolower", "toupper",
-                "umask", "unlink", "write", "calloc", "free", "main", "malloc", "mmap",
-                "realloc" ]
+  let names = [ --"abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
+                --"ceilf", "ceil", "chdir", "chown", "chroot", "clock",
+                --"closedir", "close", "cosf", "cosl", "cos", "ctime",
+                --"__ctype_b_loc", "__ctype_tolower_loc", "__ctype_toupper_loc",
+                --"difftime", "drand48", "__errno_location", "exit", "exp2",
+                --"expf", "exp", "fabsf", "fabs", "fclose", "fdopen", "feof",
+                --"ferror", "fflush", "fgetc", "fgets", "fileno", "floorf",
+                --"floor", "fopen", "fputc", "fputs", "fread", "fseek", "fstat",
+                --"ftell", "ftruncate", "fwrite", "getcwd", "getenv",
+                --"getrlimit", "gets", "gettimeofday", "getuid", "isatty",
+                --"ldexp", "localtime", "log10", "log", "lrand48", "lseek",
+                --"memchr", "memcmp", "mkdir", "mkstemp", "mmap", "opendir", "open",
+                --"pclose", "perror", "popen", "pow", "putchar", "qsort", "rand",
+                --"readdir", "read", "remove", "rename", "rewind", "rindex",
+                --"rmdir", "select", "setbuf", "setreuid", "setrlimit", "signal",
+                --"sinf", "sinl", "sin", "sleep", "sqrtf", "sqrt", "srand48",
+                --"srand", "stat", "strcasecmp", "strcat", "strchr", "strcmp",
+                --"strcpy", "strcspn", "strdup", "strerror", "strftime",
+                --"strlen", "strncasecmp", "strncat", "strncmp", "strncpy",
+                --"strpbrk", "strrchr", "strspn", "strstr", "strtod", "strtok",
+                --"strtol", "strtoul", "system",
+                --"tanf", "tanl", "tan", "times", "time", "tmpfile", "tolower", "toupper",
+                --"umask", "unlink", "write",
+                "calloc", "free", "main", "malloc", "realloc" ]
   in (Data.Set.fromList $ map mkName names,
       Data.Map.fromList $ map (\n -> (mkName n, mkName ("softboundcets_" ++ n))) names)
 
