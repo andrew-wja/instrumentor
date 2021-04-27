@@ -10,7 +10,7 @@ import Data.Map hiding (map, filter, null, foldr)
 import Data.Maybe (fromJust)
 import Data.List (unzip4)
 import Data.String (IsString(..))
-import Data.Text.Lazy (unpack)
+-- ~ import Data.Text.Lazy (unpack)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -20,7 +20,7 @@ import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
-import LLVM.Pretty (ppll)
+-- ~ import LLVM.Pretty (ppll)
 import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
@@ -326,7 +326,7 @@ instrument m = do
       emitNamedTerm i
 
     instrumentTerm i = do
-      tell ["skipping: " ++ (unpack $ ppll i)]
+      -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
       emitNamedTerm i
 
     -- Get the metadata for the given pointer. If the pointer is in the symbol
@@ -478,7 +478,7 @@ instrument m = do
           else emitNamedInst i
 
       | otherwise = do
-        tell ["skipping: " ++ (unpack $ ppll i)]
+        -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
 
     instrumentInst i@(Do o)
@@ -512,7 +512,7 @@ instrument m = do
         emitNamedInst i
 
       | otherwise = do
-        tell ["skipping: " ++ (unpack $ ppll i)]
+        -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
 
     isLocalReference (LocalReference {})= True
