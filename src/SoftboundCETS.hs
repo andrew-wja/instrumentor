@@ -354,7 +354,7 @@ instrument m = do
 
     -- Store the pointer's base, bound, key, and lock, on the shadow stack at the specified position.
 
-    emitPointerMetadataStoreToShadowStack op@(LocalReference _ _) ix = do
+    emitPointerMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
       (base, bound, key, lock) <- getMetadataForPointer op
       ix' <- pure $ int32 ix
       base' <- load base 0
@@ -375,10 +375,11 @@ instrument m = do
                 [(lock', []), (ix', [])]
       return ()
 
-    emitPointerMetadataStoreToShadowStack (ConstantOperand _) _ = undefined
-    emitPointerMetadataStoreToShadowStack (MetadataOperand _) _ = undefined
+    emitPointerMetadataStoreToShadowStack (LocalReference {}) _ = undefined
+    emitPointerMetadataStoreToShadowStack (ConstantOperand {}) _ = undefined
+    emitPointerMetadataStoreToShadowStack (MetadataOperand {}) _ = undefined
 
-    emitReturnedPointerMetadataLoadFromShadowStack (LocalReference argType argName) = do
+    emitReturnedPointerMetadataLoadFromShadowStack (LocalReference argType@(PointerType {}) argName) = do
       ix' <- pure $ int32 0
       (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
       base <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
@@ -390,8 +391,9 @@ instrument m = do
       lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
       modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (base, bound, key, lock) $ metadataTable s }
 
-    emitReturnedPointerMetadataLoadFromShadowStack (ConstantOperand _) = undefined
-    emitReturnedPointerMetadataLoadFromShadowStack (MetadataOperand _) = undefined
+    emitReturnedPointerMetadataLoadFromShadowStack (LocalReference {}) = undefined
+    emitReturnedPointerMetadataLoadFromShadowStack (ConstantOperand {}) = undefined
+    emitReturnedPointerMetadataLoadFromShadowStack (MetadataOperand {}) = undefined
 
     -- We should never see this happen -- "named terminator" is a quirk of the IR
 
