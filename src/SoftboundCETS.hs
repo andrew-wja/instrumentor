@@ -470,15 +470,17 @@ instrument m = do
 
       -- Instrument a phi node if the incoming values are pointers
       | (Phi ty@(PointerType {}) incoming _) <- o = do
-          bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
-          let (ibases, ibounds, ikeys, ilocks) = unzip4 bbkls
-          let preds = map snd incoming
-          base <- phi $ zip ibases preds
-          bound <- phi $ zip ibounds preds
-          key <- phi $ zip ikeys preds
-          lock <- phi $ zip ilocks preds
-          modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-          emitNamedInst i
+          if all isLocalReference incoming then do
+            bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
+            let (ibases, ibounds, ikeys, ilocks) = unzip4 bbkls
+            let preds = map snd incoming
+            base <- phi $ zip ibases preds
+            bound <- phi $ zip ibounds preds
+            key <- phi $ zip ikeys preds
+            lock <- phi $ zip ilocks preds
+            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+            emitNamedInst i
+          else emitNamedInst i
 
       | otherwise = do
         tell ["skipping: " ++ (unpack $ ppll i)]
@@ -517,12 +519,10 @@ instrument m = do
       | otherwise = do
         tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
-{-
-    getSizeOfType ty = do
-      tyNullPtr <- inttoptr (int64 0) (ptr ty)
-      tySzPtr <- gep tyNullPtr [int64 1]
-      ptrtoint tySzPtr i64
--}
+
+    isLocalReference (LocalReference {})= True
+    isLocalReference _ = False
+
     isPointerOperand (LocalReference (PointerType _ _) _) = True
     isPointerOperand _ = False
 
