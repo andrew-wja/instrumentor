@@ -439,22 +439,13 @@ instrument m = do
       -- Instrument a getelementptr instruction when the operand is not a
       -- constant or metadata reference. Just propagate the metadata for the
       -- source pointer through to the destination pointer.
-      | (GetElementPtr _ addr@(LocalReference ty _) _ _) <- o = do
+      | (GetElementPtr _ addr@(LocalReference ty@(PointerType {}) _) _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer addr
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
-      | (BitCast addr@(LocalReference _ _) ty _) <- o = do
+      | (BitCast addr@(LocalReference (PointerType {}) _) ty _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer addr
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-        emitNamedInst i
-
-      -- If someone is using inttoptr then they forego any kind of protection
-      | (IntToPtr _ ty _) <- o = do
-        base <- inttoptr (int8 0) (ptr i8)
-        bound <- inttoptr (int8 0) (ptr i8)
-        key <- pure $ int64 0
-        lock <- inttoptr (int8 0) (ptr i8)
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
@@ -510,7 +501,7 @@ instrument m = do
       -- If we ever store a pointer to memory, we need to record the metadata
       -- for that pointer in the runtime, so that it can be looked up by whoever
       -- loads it back from memory later.
-      | (Store _ addr@(LocalReference (PointerType (PointerType _ _) _) _) val@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
+      | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer val
         addr' <- bitcast addr (ptr i8)
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
