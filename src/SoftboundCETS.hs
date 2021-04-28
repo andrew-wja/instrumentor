@@ -438,7 +438,7 @@ instrument m = do
       -- Instrument a getelementptr instruction when the operand is not a
       -- constant or metadata reference. Just propagate the metadata for the
       -- source pointer through to the destination pointer.
-      {-
+
       | (GetElementPtr _ addr@(LocalReference ty@(PointerType {}) _) _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer addr
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
@@ -474,7 +474,7 @@ instrument m = do
             modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
             emitNamedInst i
           else emitNamedInst i
-      -}
+
       | otherwise = do
         -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
@@ -504,9 +504,13 @@ instrument m = do
       | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer val
         addr' <- bitcast addr (ptr i8)
+        base' <- load base 0
+        bound' <- load bound 0
+        key' <- load key 0
+        lock' <- load lock 0
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+                    [(addr', []), (base', []), (bound', []), (key', []), (lock', [])]
         emitNamedInst i
 
       | otherwise = do
@@ -516,10 +520,10 @@ instrument m = do
     isLocalReference (LocalReference {})= True
     isLocalReference _ = False
 
-    isPointerOperand (LocalReference (PointerType _ _) _) = True
+    isPointerOperand (LocalReference (PointerType {}) _) = True
     isPointerOperand _ = False
 
-    isPointerType (PointerType _ _) = True
+    isPointerType (PointerType {}) = True
     isPointerType _ = False
 
     rewriteCalledFunctionName n (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) =
