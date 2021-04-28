@@ -405,10 +405,11 @@ instrument m = do
 
     instrumentInst i@(v := o)
       -- Instrument alloca instructions
+      {-
       | (Alloca {}) <- o = do
         modify $ \s -> s { stackAllocations = Data.Set.insert v $ stackAllocations s }
         emitNamedInst i
-
+      -}
       -- Instrument a load instruction
       -- If we're loading a pointer from memory then we also need to load the
       -- metadata for that pointer from the runtime, and record the local variables
@@ -441,6 +442,7 @@ instrument m = do
       -- Instrument a getelementptr instruction when the operand is not a
       -- constant or metadata reference. Just propagate the metadata for the
       -- source pointer through to the destination pointer.
+      {-
       | (GetElementPtr _ addr@(LocalReference ty@(PointerType {}) _) _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer addr
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
@@ -476,7 +478,7 @@ instrument m = do
             modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
             emitNamedInst i
           else emitNamedInst i
-
+      -}
       | otherwise = do
         -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
