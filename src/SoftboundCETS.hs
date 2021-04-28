@@ -10,7 +10,6 @@ import Data.Map hiding (map, filter, null, foldr)
 import Data.Maybe (fromJust)
 import Data.List (unzip4)
 import Data.String (IsString(..))
--- ~ import Data.Text.Lazy (unpack)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -20,13 +19,11 @@ import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
--- ~ import LLVM.Pretty (ppll)
 import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , functionKey :: Maybe Operand
                                , functionLock :: Maybe Operand
-                               , stackAllocations :: Set Name
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                , instrumentationCandidates :: Set Name
                                , renamingCandidates :: Set Name
@@ -326,8 +323,11 @@ instrument m = do
       emitNamedTerm i
 
     instrumentTerm i = do
-      -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
       emitNamedTerm i
+
+    emitNamedTerm t = do
+      modifyBlock $ \bb -> bb
+        { partialBlockTerm = Just t }
 
     -- Get the metadata for the given pointer. If the pointer is in the symbol
     -- table, just return the symbol table entry. Otherwise, ask the runtime for
@@ -395,23 +395,11 @@ instrument m = do
     emitReturnedPointerMetadataLoadFromShadowStack (ConstantOperand {}) = undefined
     emitReturnedPointerMetadataLoadFromShadowStack (MetadataOperand {}) = undefined
 
-    emitNamedTerm t = do
-      modifyBlock $ \bb -> bb
-        { partialBlockTerm = Just t }
-
     instrumentInst i@(v := o)
-      -- Instrument alloca instructions
-      {-
-      | (Alloca {}) <- o = do
-        modify $ \s -> s { stackAllocations = Data.Set.insert v $ stackAllocations s }
-        emitNamedInst i
-      -}
       -- Instrument a load instruction
       -- If we're loading a pointer from memory then we also need to load the
       -- metadata for that pointer from the runtime, and record the local variables
       -- holding that metadata in the symbol table.
-      -- Crucially, we also need to *propagate* the metadata so that uses of the
-      -- loaded pointer can also be checked.
       | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) _) _ _ _) <- o = do
         (base, bound, key, lock) <- getMetadataForPointer addr
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
@@ -476,7 +464,6 @@ instrument m = do
           else emitNamedInst i
 
       | otherwise = do
-        -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
 
     instrumentInst i@(Do o)
@@ -514,7 +501,6 @@ instrument m = do
         emitNamedInst i
 
       | otherwise = do
-        -- ~ tell ["skipping: " ++ (unpack $ ppll i)]
         emitNamedInst i
 
     isLocalReference (LocalReference {})= True
