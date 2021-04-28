@@ -269,9 +269,9 @@ instrument m = do
     emitPointerMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
       (basePtr, boundPtr, key, lockPtr) <- getMetadataForPointer op
       ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      lock <- load lockPtr 0
+      base <- bitcast basePtr (ptr i8)
+      bound <- bitcast boundPtr (ptr i8)
+      lock <- bitcast lockPtr (ptr i8)
       (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
                 [(base, []), (ix', [])]
@@ -447,20 +447,6 @@ instrument m = do
         lock <- select cond tlock flock
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
-
-      -- Instrument a phi node if the incoming values are pointers
-      | (Phi ty@(PointerType {}) incoming _) <- o = do
-          if all (isLocalReference . fst) incoming then do
-            bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
-            let (ibases, ibounds, ikeys, ilocks) = unzip4 bbkls
-            let preds = map snd incoming
-            base <- phi $ zip ibases preds
-            bound <- phi $ zip ibounds preds
-            key <- phi $ zip ikeys preds
-            lock <- phi $ zip ilocks preds
-            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-            emitNamedInst i
-          else emitNamedInst i
 
       | otherwise = do
         emitNamedInst i
