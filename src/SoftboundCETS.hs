@@ -383,9 +383,12 @@ instrument m = do
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        base <- load basePtr 0
+        bound <- load boundPtr 0
         key <- load keyPtr 0
-        modify $ \s -> s { metadataTable = Data.Map.insert addr (basePtr, boundPtr, key, lockPtr) $ metadataTable s }
-        return (basePtr, boundPtr, key, lockPtr)
+        lock <- load lockPtr 0
+        modify $ \s -> s { metadataTable = Data.Map.insert addr (base, bound, key, lock) $ metadataTable s }
+        return (base, bound, key, lock)
 
     getMetadataForPointer x@_ = error $ "getMetadataForPointer: expected pointer but saw " ++ show x
 
@@ -468,15 +471,12 @@ instrument m = do
       -- If we ever store a pointer to memory, we need to record the metadata
       -- for that pointer in the runtime, so that it can be looked up by whoever
       -- loads it back from memory later.
-      | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
+      | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType {}) _) _ _ _) <- o = do
         (basePtr, boundPtr, key, lockPtr) <- getMetadataForPointer val
         addr' <- bitcast addr (ptr i8)
-        base <- load basePtr 0
-        bound <- load boundPtr 0
-        lock <- load lockPtr 0
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
+                    [(addr', []), (basePtr, []), (boundPtr, []), (key, []), (lockPtr, [])]
         emitNamedInst i
 
       | otherwise = do
