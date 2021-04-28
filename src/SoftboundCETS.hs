@@ -8,7 +8,6 @@ import Control.Monad.RWS hiding (void)
 import Data.Set hiding (map, filter, null, foldr)
 import Data.Map hiding (map, filter, null, foldr)
 import Data.Maybe (fromJust)
-import Data.List (unzip4)
 import Data.String (IsString(..))
 import LLVM.AST
 import LLVM.AST.Global
@@ -479,9 +478,6 @@ instrument m = do
 
       | otherwise = do
         emitNamedInst i
-
-    isLocalReference (LocalReference {})= True
-    isLocalReference _ = False
 
     isPointerOperand (LocalReference (PointerType {}) _) = True
     isPointerOperand _ = False
