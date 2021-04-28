@@ -490,9 +490,12 @@ instrument m = do
       | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType _ _) _) _ _ _) <- o = do
         (basePtr, boundPtr, key, lockPtr) <- getMetadataForPointer val
         addr' <- bitcast addr (ptr i8)
+        basePtr' <- bitcast basePtr (ptr i8)
+        boundPtr' <- bitcast boundPtr (ptr i8)
+        lockPtr' <- bitcast lockPtr (ptr i8)
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(addr', []), (basePtr, []), (boundPtr, []), (key, []), (lockPtr, [])]
+                    [(addr', []), (basePtr', []), (boundPtr', []), (key, []), (lockPtr', [])]
         emitNamedInst i
 
       | otherwise = do
