@@ -222,10 +222,10 @@ instrument m = do
     -- then branch unconditionally to the first block in the function body.
 
     instrumentPointerArgs fblabel pms = do
-      let pointerArgs = filter isPointerArg pms
+      let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isPointerArg pms
       let shadowStackIndices :: [Integer] = [1..]
       emitBlockStart (mkName "sbcets_parameter_metadata_init")
-      zipWithM_ emitParameterMetadataLoadFromShadowStack pointerArgs shadowStackIndices
+      zipWithM_ emitMetadataLoadFromShadowStack pointerArgs shadowStackIndices
       emitTerm $ Br fblabel []
       where
         isPointerArg (Parameter (PointerType _ _) _ _) = True
@@ -237,50 +237,46 @@ instrument m = do
     -- The zeroth shadow stack location is reserved for metadata about the return
     -- value, but unused if the return value is not a pointer.
 
-    emitParameterMetadataLoadFromShadowStack (Parameter argType argName _) ix = do
+    emitMetadataLoadFromShadowStack (localTy, localName) ix = do
       ix' <- pure $ int32 ix
       (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
-      basePtr <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
+      base <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
       (boundName, boundProto) <- gets((!! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
-      boundPtr <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
+      bound <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
       (keyName, keyProto) <- gets((!! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
       key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
       (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
-      lockPtr <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
-      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (basePtr, boundPtr, key, lockPtr) $ metadataTable s }
-
-    emitPointerMetadataLoadFromShadowStack (LocalReference argType@(PointerType {}) argName) ix = do
-      ix' <- pure $ int32 ix
-      (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
-      basePtr <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
-      (boundName, boundProto) <- gets((!! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
-      boundPtr <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
-      (keyName, keyProto) <- gets((!! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
-      key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
-      (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
-      lockPtr <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
-      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference argType argName) (basePtr, boundPtr, key, lockPtr) $ metadataTable s }
-
-    emitPointerMetadataLoadFromShadowStack (LocalReference {}) _ = undefined
-    emitPointerMetadataLoadFromShadowStack (ConstantOperand {}) _ = undefined
-    emitPointerMetadataLoadFromShadowStack (MetadataOperand {}) _ = undefined
+      lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
+      basePtr <- alloca (ptr i8) Nothing 8
+      boundPtr <- alloca (ptr i8) Nothing 8
+      keyPtr <- alloca (i64) Nothing 8
+      lockPtr <- alloca (ptr i8) Nothing 8
+      store basePtr 8 base
+      store boundPtr 8 bound
+      store keyPtr 8 key
+      store lockPtr 8 lock
+      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
     emitPointerMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
-      (basePtr, boundPtr, key, lockPtr) <- getMetadataForPointer op
+      (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer op
       ix' <- pure $ int32 ix
+      base <- load basePtr 0
+      bound <- load boundPtr 0
+      key <- load keyPtr 0
+      lock <- load lockPtr 0
       (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                [(basePtr, []), (ix', [])]
+                [(base, []), (ix', [])]
       (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                [(boundPtr, []), (ix', [])]
+                [(bound, []), (ix', [])]
       (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
                 [(key, []), (ix', [])]
       (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                [(lockPtr, []), (ix', [])]
+                [(lock, []), (ix', [])]
       return ()
 
     emitPointerMetadataStoreToShadowStack (LocalReference {}) _ = undefined
@@ -384,12 +380,8 @@ instrument m = do
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-        base <- load basePtr 0
-        bound <- load boundPtr 0
-        key <- load keyPtr 0
-        lock <- load lockPtr 0
-        modify $ \s -> s { metadataTable = Data.Map.insert addr (base, bound, key, lock) $ metadataTable s }
-        return (base, bound, key, lock)
+        modify $ \s -> s { metadataTable = Data.Map.insert addr (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
+        return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointer x@_ = error $ "getMetadataForPointer: expected pointer but saw " ++ show x
 
@@ -417,7 +409,7 @@ instrument m = do
         -- the function could deallocate any of the passed pointers
         modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
         -- read the pointer metadata for the return value if it is a pointer
-        when (isPointerType rt) $ emitPointerMetadataLoadFromShadowStack (LocalReference rt v) 0
+        when (isPointerType rt) $ emitMetadataLoadFromShadowStack (rt, v) 0
         -- deallocate the shadow stack space
         emitShadowStackDeallocation
 
@@ -487,11 +479,15 @@ instrument m = do
       -- for that pointer in the runtime, so that it can be looked up by whoever
       -- loads it back from memory later.
       | (Store _ addr@(LocalReference {}) val@(LocalReference (PointerType {}) _) _ _ _) <- o = do
-        (basePtr, boundPtr, key, lockPtr) <- getMetadataForPointer val
+        (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer val
         addr' <- bitcast addr (ptr i8)
+        base <- load basePtr 0
+        bound <- load boundPtr 0
+        key <- load keyPtr 0
+        lock <- load lockPtr 0
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(addr', []), (basePtr, []), (boundPtr, []), (key, []), (lockPtr, [])]
+                    [(addr', []), (base, []), (bound, []), (key, []), (lock, [])]
         emitNamedInst i
 
       | otherwise = do
