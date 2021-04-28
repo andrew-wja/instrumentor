@@ -9,7 +9,7 @@ packages:
 - ./llvm-hs-pretty
 
 ghc-options:
-  "$locals": -Wall
+  "$locals": -Wall -fno-warn-name-shadowing -fno-warn-orphans
   "$targets": -Wall
   "$everything": -O0
 

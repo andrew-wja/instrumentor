@@ -24,3 +24,6 @@ dist/instrumentor: build-instrumentor
 clean:
 	rm -rf dist
 	stack clean
+
+really-clean: clean
+	rm -rf llvm-build runtimes-build
