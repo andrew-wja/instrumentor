@@ -395,13 +395,9 @@ instrument m = do
     emitReturnedPointerMetadataLoadFromShadowStack (ConstantOperand {}) = undefined
     emitReturnedPointerMetadataLoadFromShadowStack (MetadataOperand {}) = undefined
 
-    -- We should never see this happen -- "named terminator" is a quirk of the IR
-
-    emitNamedTerm (_ := _) = undefined
-
-    emitNamedTerm (Do t) = do
+    emitNamedTerm t = do
       modifyBlock $ \bb -> bb
-        { partialBlockTerm = Just (Do t) }
+        { partialBlockTerm = Just t }
 
     instrumentInst i@(v := o)
       -- Instrument alloca instructions
