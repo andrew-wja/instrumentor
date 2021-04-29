@@ -207,6 +207,4 @@ void* __softboundcets_safe_malloc(size_t);
 void __softboundcets_safe_free(void*);
 void * __softboundcets_safe_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 
-static __attribute__ ((__constructor__)) void __softboundcets_global_init();
-
 #endif // SOFTBOUNDCETS_INTERNAL_H

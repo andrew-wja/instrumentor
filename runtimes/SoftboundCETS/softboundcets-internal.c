@@ -446,7 +446,7 @@ void * __softboundcets_safe_mmap(void* addr,
   return mmap(addr, length, prot, flags, fd, offset);
 }
 
-void __softboundcets_global_init() {
+static __attribute__ ((__constructor__)) void __softboundcets_global_init() {
   __softboundcets_init();
   __softboundcets_stub();
 }
@@ -494,7 +494,7 @@ extern int softboundcets_main(int argc, char **argv);
 int main(int argc, char **argv) {
 
   if(!softboundcets_initialized){
-    __softboundcets_init();
+    __softboundcets_global_init();
   }
 
   char** new_argv = argv;
