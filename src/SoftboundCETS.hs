@@ -9,7 +9,6 @@ import Data.Set hiding (map, filter, null, foldr)
 import Data.Map hiding (map, filter, null, foldr)
 import Data.Maybe (fromJust)
 import Data.String (IsString(..))
-import Data.List (unzip4)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -445,22 +444,6 @@ instrument m = do
         modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
         emitNamedInst i
 
-      -- Instrument a phi node if the incoming values are pointers
-      {-
-      | (Phi ty@(PointerType {}) incoming _) <- o = do
-          if all (isLocalReference . fst) incoming then do
-            bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
-            let (ibases, ibounds, ikeys, ilocks) = unzip4 bbkls
-            let preds = map snd incoming
-            base <- phi $ zip ibases preds
-            bound <- phi $ zip ibounds preds
-            key <- phi $ zip ikeys preds
-            lock <- phi $ zip ilocks preds
-            modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-            emitNamedInst i
-          else emitNamedInst i
-      -}
-
       | otherwise = do
         emitNamedInst i
 
@@ -500,9 +483,6 @@ instrument m = do
 
       | otherwise = do
         emitNamedInst i
-
-    isLocalReference (LocalReference {})= True
-    isLocalReference _ = False
 
     isPointerOperand (LocalReference (PointerType {}) _) = True
     isPointerOperand _ = False
