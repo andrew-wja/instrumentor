@@ -363,7 +363,13 @@ __softboundcets_metadata_load(void* addr_of_ptr,
                               size_t* key,
                               void** lock) {
 
-  assert(addr_of_ptr && "[metadata_load]: metadata requested for null pointer");
+  if(addr_of_ptr == NULL) {
+    *((void**) base) = NULL;
+    *((void**) bound) = NULL;
+    *((size_t*) key) = 0;
+    *((void**) lock) = NULL;
+    return;
+  }
 
   size_t ptr = (size_t) addr_of_ptr;
   __softboundcets_trie_entry_t* trie_secondary_table;
@@ -373,10 +379,10 @@ __softboundcets_metadata_load(void* addr_of_ptr,
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
     if(trie_secondary_table == NULL) {
-      *((void**) base) = 0;
-      *((void**) bound) = 0;
+      *((void**) base) = NULL;
+      *((void**) bound) = NULL;
       *((size_t*) key ) = 0;
-      *((size_t*) lock) = 0;
+      *((void**) lock) = NULL;
       return;
     }
   }
