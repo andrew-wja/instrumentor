@@ -344,6 +344,7 @@ instrument m = do
     -- We cannot, in general, allow any cached stack-allocated metadata to
     -- persist beyond the basic block wherein it was created, or we risk
     -- breaking SSA form by introducing uses not dominated by the definition.
+
     emitBlock (BasicBlock n i t) = do
       savedMDTable <- gets metadataTable
       emitBlockStart n
@@ -445,6 +446,7 @@ instrument m = do
         emitNamedInst i
 
       -- Instrument a phi node if the incoming values are pointers
+      {-
       | (Phi ty@(PointerType {}) incoming _) <- o = do
           if all (isLocalReference . fst) incoming then do
             bbkls <- mapM (\x -> getMetadataForPointer $ fst x) incoming
@@ -457,6 +459,7 @@ instrument m = do
             modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
             emitNamedInst i
           else emitNamedInst i
+      -}
 
       | otherwise = do
         emitNamedInst i
