@@ -22,9 +22,6 @@ int main(int argc, char * argv[]) {
   char * some_ptr = foo();
   char * some_ptr2 = foo();
   char * some_ptr3 = foo();
-  some_ptr3[0] = '-';
-  some_ptr3[1] = '-';
-  some_ptr3[2] = '-';
 
   // this should trigger a failure
   bad(some_ptr2);
@@ -37,12 +34,14 @@ int main(int argc, char * argv[]) {
   free(some_ptr2);
   free(some_ptr3);
 
-  // this should trigger a failure
-  char test = some_ptr[9];
+  // temporal load dereference check
+  //~ char test = some_ptr[9];
+  // temporal store deference check
+  //~ some_ptr[9] = '-';
 
-  print(some_ptr);
-  print(some_ptr2);
-  print(some_ptr3);
+  //~ print(some_ptr);
+  //~ print(some_ptr2);
+  //~ print(some_ptr3);
 
   return 0;
 }
