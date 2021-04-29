@@ -383,13 +383,20 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   size_t secondary_index = ((ptr >> 3) & 0x3fffff);
   __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
 
-  *((void**) base) = entry_ptr->base;
-  *((void**) bound) = entry_ptr->bound;
-  *((size_t*) key) = entry_ptr->key;
-  *((void**) lock) = (void*) entry_ptr->lock;
+  if (entry_ptr) {
+    *((void**) base) = entry_ptr->base;
+    *((void**) bound) = entry_ptr->bound;
+    *((size_t*) key) = entry_ptr->key;
+    *((void**) lock) = (void*) entry_ptr->lock;
+  } else {
+    *((void**) base) = 0;
+    *((void**) bound) = 0;
+    *((size_t*) key ) = 0;
+    *((size_t*) lock) = 0;
+  }
 
 #if defined(SOFTBOUNDCETS_DEBUG)
-  __softboundcets_printf("[metadata_load] ptr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
+  __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
                           addr_of_ptr, entry_ptr->base, entry_ptr->bound,
                           entry_ptr->key, entry_ptr->lock, *((size_t*) (entry_ptr->lock)));
 #endif
