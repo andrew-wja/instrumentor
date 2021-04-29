@@ -385,7 +385,6 @@ instrument m = do
         (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                   [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-        modify $ \s -> s { metadataTable = Data.Map.insert addr (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
         return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointer x@_ = error $ "getMetadataForPointer: expected pointer but saw " ++ show x
