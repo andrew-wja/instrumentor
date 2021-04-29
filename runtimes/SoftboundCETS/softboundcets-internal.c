@@ -354,15 +354,22 @@ __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 __WEAK__ void
 __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t ptr_key) {
 
+  if (ptr_lock != NULL) {
 #if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                            ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
-
-  *((size_t*)ptr_lock) = 0;
-  *((void**) ptr_lock) = __softboundcets_lock_next_location;
-  __softboundcets_lock_next_location = ptr_lock;
-  return;
+    *((size_t*)ptr_lock) = 0;
+    *((void**) ptr_lock) = __softboundcets_lock_next_location;
+    __softboundcets_lock_next_location = ptr_lock;
+    return;
+  } else {
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
+                           ptr, ptr_lock);
+#endif
+    return;
+  }
 }
 
 __WEAK__ void __softboundcets_dummy(){

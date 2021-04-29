@@ -29,11 +29,17 @@ instrumented.s: instrumented.bc
 instrumented: instrumented.bc
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_full_rt instrumented.bc -o instrumented
 
+dummy-instrumented: instrumented.bc
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_dummy_rt instrumented.bc -o dummy-instrumented
+
 instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump
 
 run-instrumented: instrumented
 	LD_LIBRARY_PATH=$(realpath ../runtimes-build/lib) ./instrumented
+
+run-dummy-instrumented: dummy-instrumented
+	LD_LIBRARY_PATH=$(realpath ../runtimes-build/lib) ./dummy-instrumented
 
 clean:
 	rm -f test.{bc,ll} test instrumented.{alt.ll,bc,ll,s,dump} instrumented

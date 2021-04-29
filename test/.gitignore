@@ -8,3 +8,4 @@ instrumented.ll
 instrumented.alt.ll
 instrumented.s
 instrumented.dump
+dummy-instrumented
