@@ -60,16 +60,16 @@ endif()
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
-    -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
+    -fdiagnostics-color=always -g -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
 
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
-    -fdiagnostics-color=always -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
+    -fdiagnostics-color=always -g -DSOFTBOUNDCETS_DEBUG -DSOFTBOUNDCETS_ASSERTS")
 
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} -Wall -Werror -pedantic-errors\
-    -fdiagnostics-color=always")
+    -fdiagnostics-color=always -g")
 
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} -Wall -pedantic-errors\
-    -fdiagnostics-color=always")
+    -fdiagnostics-color=always -g")
 
 # LLVM is normally built without RTTI. Be consistent with that.
 if(NOT LLVM_ENABLE_RTTI)
