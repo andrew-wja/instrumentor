@@ -341,10 +341,15 @@ instrument m = do
                 [(fromJust localKey, [])]
       return ()
 
+    -- We cannot, in general, allow any cached stack-allocated metadata to
+    -- persist beyond the basic block wherein it was created, or we risk
+    -- breaking SSA form by introducing uses not dominated by the definition.
     emitBlock (BasicBlock n i t) = do
+      savedMDTable <- gets metadataTable
       emitBlockStart n
       mapM_ instrumentInst i
       instrumentTerm t
+      modify (\s-> s { metadataTable = savedMDTable })
 
     -- Location 0 in the shadow stack is for metadata about the return value of
     -- a function, when that return value is a pointer. When it is not a pointer,
