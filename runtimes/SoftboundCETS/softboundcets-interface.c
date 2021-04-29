@@ -363,20 +363,13 @@ __softboundcets_metadata_load(void* addr_of_ptr,
                               size_t* key,
                               void** lock) {
 
-  if(addr_of_ptr == NULL) {
-    *((void**) base) = 0;
-    *((void**) bound) = 0;
-    *((size_t*) key ) = 0;
-    *((size_t*) lock) = 0;
-    return;
-  }
+  assert(addr_of_ptr && "[metadata_load]: metadata requested for null pointer");
 
   size_t ptr = (size_t) addr_of_ptr;
   __softboundcets_trie_entry_t* trie_secondary_table;
 
   size_t primary_index = ( ptr >> 25);
   trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
-
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
     if(trie_secondary_table == NULL) {
@@ -391,17 +384,12 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   size_t secondary_index = ((ptr >> 3) & 0x3fffff);
   __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
 
-  if (entry_ptr) {
-    *((void**) base) = entry_ptr->base;
-    *((void**) bound) = entry_ptr->bound;
-    *((size_t*) key) = entry_ptr->key;
-    *((void**) lock) = (void*) entry_ptr->lock;
-  } else {
-    *((void**) base) = 0;
-    *((void**) bound) = 0;
-    *((size_t*) key ) = 0;
-    *((size_t*) lock) = 0;
-  }
+  assert(entry_ptr && "[metadata_load]: lookup failed for input pointer");
+
+  *((void**) base) = entry_ptr->base;
+  *((void**) bound) = entry_ptr->bound;
+  *((size_t*) key) = entry_ptr->key;
+  *((void**) lock) = (void*) entry_ptr->lock;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
