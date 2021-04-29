@@ -1,36 +1,26 @@
 .PHONY: clean run-test run-instrumented
 
-test.bc: test.c
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -o test.bc
-
 test.ll: test.c
 	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -S -o test.ll
 
-test: test.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 test.bc -o test
+test: test.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 test.ll -o test
 
 run-test: test
 	./test
 
-instrumented.bc: test.bc
-	cp test.bc instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../dist):$(realpath ../llvm-root/bin):$$PATH instrumentor instrumented.bc
+instrumented.ll: test.ll
+	cp test.ll instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../dist):$(realpath ../llvm-root/bin):$$PATH instrumentor instrumented.ll
 
-instrumented.ll: instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH llvm-dis instrumented.bc -o instrumented.ll
+instrumented.s: instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.s
 
-instrumented.alt.ll: test.ll
-	cp test.ll instrumented.alt.ll
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../dist):$(realpath ../llvm-root/bin):$$PATH instrumentor instrumented.alt.ll
+instrumented: instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_full_rt instrumented.ll -o instrumented
 
-instrumented.s: instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 instrumented.bc -S -o instrumented.s
-
-instrumented: instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_full_rt instrumented.bc -o instrumented
-
-dummy-instrumented: instrumented.bc
-	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_dummy_rt instrumented.bc -o dummy-instrumented
+dummy-instrumented: instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../llvm-root/lib) PATH=$(realpath ../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../runtimes-build/lib/) -lSoftBoundCETS_dummy_rt instrumented.ll -o dummy-instrumented
 
 instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump

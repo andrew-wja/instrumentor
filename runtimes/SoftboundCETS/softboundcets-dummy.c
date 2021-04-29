@@ -56,15 +56,11 @@ __softboundcets_spatial_store_dereference_check(void *base,
 
 __WEAK__ void
 __softboundcets_temporal_load_dereference_check(void* pointer_lock,
-                                                size_t key,
-                                                void* base,
-                                                void* bound) {}
+                                                size_t key) {}
 
 __WEAK__ void
 __softboundcets_temporal_store_dereference_check(void* pointer_lock,
-                                                 size_t key,
-                                                 void* base,
-                                                 void* bound) {}
+                                                 size_t key) {}
 
 __WEAK__ void*
 __softboundcets_get_global_lock(){

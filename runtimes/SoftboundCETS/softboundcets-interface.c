@@ -51,7 +51,7 @@ __softboundcets_spatial_load_dereference_check(void *base,
                                                void *ptr,
                                                size_t size_of_type) {
   if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
-    __softboundcets_printf("In LDC, base=%zx, bound=%zx, ptr=%zx\n",
+    __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
                            base, bound, ptr);
     __softboundcets_abort();
   }
@@ -64,7 +64,7 @@ __softboundcets_spatial_store_dereference_check(void *base,
                                                 void *ptr,
                                                 size_t size_of_type) {
   if ((ptr < base) || ((void*)((char*)ptr + size_of_type) > bound)) {
-    __softboundcets_printf("In Store Dereference Check, base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
+    __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
                            base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
     __softboundcets_abort();
   }
@@ -73,13 +73,11 @@ __softboundcets_spatial_store_dereference_check(void *base,
 
 __WEAK__ void
 __softboundcets_temporal_load_dereference_check(void* pointer_lock,
-                                                size_t key,
-                                                void* base,
-                                                void* bound) {
+                                                size_t key) {
   size_t temp = *((size_t*)pointer_lock);
 
   if(temp != key) {
-    __softboundcets_printf("[TLDC] Key mismatch key = %zx, *lock=%zx, next_ptr =%zx\n",
+    __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key = %zx, *lock=%zx, next_ptr =%zx\n",
                            key, temp, __softboundcets_lock_next_location );
     __softboundcets_abort();
   }
@@ -88,13 +86,11 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
 
 __WEAK__ void
 __softboundcets_temporal_store_dereference_check(void* pointer_lock,
-                                                 size_t key,
-                                                 void* base,
-                                                 void* bound) {
+                                                 size_t key) {
   size_t temp = *((size_t*)pointer_lock);
 
   if(temp != key) {
-    __softboundcets_printf("[TSDC] Key mismatch, key = %zx, *lock=%zx\n",
+    __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key = %zx, *lock=%zx\n",
                            key, temp );
     __softboundcets_abort();
   }
@@ -111,7 +107,7 @@ __softboundcets_introspect_metadata(void* ptr,
                                                        void* base,
                                                        void* bound,
                                                        int arg_no) {
-  __softboundcets_printf("[introspect_metadata]ptr=%p, base=%p, bound=%p, arg_no=%d\n",
+  __softboundcets_printf("[introspect_metadata] ptr=%p, base=%p, bound=%p, arg_no=%d\n",
                          ptr, base, bound, arg_no);
   return;
 }
@@ -368,6 +364,11 @@ __softboundcets_metadata_load(void* addr_of_ptr,
     *((void**) bound) = NULL;
     *((size_t*) key) = 0;
     *((void**) lock) = NULL;
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                            addr_of_ptr, *((void**) base), *((void**) bound),
+                            *((size_t*) key), *((void**) lock));
+#endif
     return;
   }
 
@@ -390,7 +391,7 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   size_t secondary_index = ((ptr >> 3) & 0x3fffff);
   __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
 
-  assert(entry_ptr && "[metadata_load]: lookup failed for input pointer");
+  assert(entry_ptr && "[metadata_load] lookup failed for input pointer");
 
   *((void**) base) = entry_ptr->base;
   *((void**) bound) = entry_ptr->bound;
@@ -411,6 +412,16 @@ __softboundcets_metadata_store(void* addr_of_ptr,
                                void* bound,
                                size_t key,
                                void* lock) {
+
+  if(addr_of_ptr == NULL) {
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_store] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                            addr_of_ptr, *((void**) base), *((void**) bound),
+                            *((size_t*) key), *((void**) lock));
+#endif
+    return;
+  }
+
   size_t ptr = (size_t) addr_of_ptr;
   size_t primary_index;
   __softboundcets_trie_entry_t* trie_secondary_table;
@@ -434,6 +445,12 @@ __softboundcets_metadata_store(void* addr_of_ptr,
   entry_ptr->key = key;
   entry_ptr->lock = lock;
 
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[metadata_store] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
+                          addr_of_ptr, entry_ptr->base, entry_ptr->bound,
+                          entry_ptr->key, entry_ptr->lock, *((size_t*) (entry_ptr->lock)));
+#endif
+
   return;
 }
 
@@ -445,7 +462,7 @@ __softboundcets_spatial_call_dereference_check(void* base,
                                                void* ptr) {
   if ((base != bound) && (ptr != base)) {
 #if defined(SOFTBOUNDCETS_DEBUG)
-      __softboundcets_printf("In Call Dereference Check, base=%p, bound=%p, ptr=%p\n", base, bound, ptr);
+      __softboundcets_printf("[spatial_call_dereference_check] base=%p, bound=%p, ptr=%p\n", base, bound, ptr);
 #endif
     __softboundcets_abort();
   }

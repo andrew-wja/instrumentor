@@ -60,9 +60,9 @@ initSBCETSState = emptySBCETSState
     ("__softboundcets_allocate_shadow_stack_space", FunctionType void [i32] False),
     ("__softboundcets_deallocate_shadow_stack_space", FunctionType void [] False),
     ("__softboundcets_spatial_load_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-    ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
+    ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64] False),
     ("__softboundcets_spatial_store_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-    ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64, ptr i8, ptr i8] False),
+    ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64] False),
     ("__softboundcets_create_stack_key", FunctionType void [(ptr $ ptr i8), ptr i64] False),
     ("__softboundcets_destroy_stack_key", FunctionType void [i64] False)
     ]
@@ -395,8 +395,22 @@ instrument m = do
       -- metadata for that pointer from the runtime, and record the local variables
       -- holding that metadata in the symbol table.
       | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) _) _ _ _) <- o = do
-        (base, bound, key, lock) <- getMetadataForPointer addr
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
+        (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer addr
+        -- Check the load is spatially in bounds
+        (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
+        addr' <- load addr 0
+        base <- load basePtr 0
+        bound <- load boundPtr 0
+        tySize <- sizeof 64 ty
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(base, []), (bound, []), (addr', []), (tySize, [])]
+        -- Check the load is temporally in bounds
+        (fname', fproto') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
+        lock <- load lockPtr 0
+        key <- load keyPtr 0
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(lock, []), (key, [])]
+        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
         emitNamedInst i
 
       -- Instrument a call instruction unless it is calling inline assembly
