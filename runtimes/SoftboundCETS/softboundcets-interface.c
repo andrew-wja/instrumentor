@@ -363,6 +363,14 @@ __softboundcets_metadata_load(void* addr_of_ptr,
                               size_t* key,
                               void** lock) {
 
+  if(addr_of_ptr == NULL) {
+    *((void**) base) = 0;
+    *((void**) bound) = 0;
+    *((size_t*) key ) = 0;
+    *((size_t*) lock) = 0;
+    return;
+  }
+
   size_t ptr = (size_t) addr_of_ptr;
   __softboundcets_trie_entry_t* trie_secondary_table;
 
