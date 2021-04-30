@@ -373,11 +373,12 @@ instrument m = do
         -- Check the load is spatially in bounds
         (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
         addr' <- load addr 0
+        addr'' <- bitcast addr' (ptr i8)
         base <- load basePtr 0
         bound <- load boundPtr 0
         tySize <- sizeof 64 ty
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(base, []), (bound, []), (addr', []), (tySize, [])]
+                  [(base, []), (bound, []), (addr'', []), (tySize, [])]
         -- Check the load is temporally in bounds
         (fname', fproto') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
         lock <- load lockPtr 0
