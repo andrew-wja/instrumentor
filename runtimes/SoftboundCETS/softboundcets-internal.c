@@ -145,16 +145,6 @@ void __softboundcets_init(void)
   size_t * current_size_shadow_stack_ptr =  __softboundcets_shadow_stack_ptr +1 ;
   *(current_size_shadow_stack_ptr) = 0;
 
-
-  if(__SOFTBOUNDCETS_FREE_MAP) {
-    size_t length_free_map = (__SOFTBOUNDCETS_N_FREE_MAP_ENTRIES) * sizeof(size_t);
-    __softboundcets_free_map_table = mmap(0, length_free_map,
-                                          PROT_READ| PROT_WRITE,
-                                          SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
-    assert(__softboundcets_free_map_table != (void*) -1);
-  }
-
-
   size_t length_trie = (__SOFTBOUNDCETS_TRIE_PRIMARY_TABLE_ENTRIES) * sizeof(__softboundcets_trie_entry_t*);
 
   __softboundcets_trie_primary_table = mmap(0, length_trie,
@@ -171,7 +161,6 @@ __softboundcets_trie_entry_t** __softboundcets_trie_primary_table;
 size_t* __softboundcets_shadow_stack_ptr = NULL;
 size_t* __softboundcets_temporal_space_begin = 0;
 size_t* __softboundcets_stack_temporal_space_begin = NULL;
-size_t* __softboundcets_free_map_table = NULL;
 size_t* __softboundcets_global_lock = 0;
 size_t* __softboundcets_lock_next_location = NULL;
 size_t* __softboundcets_lock_new_location = NULL;
@@ -182,7 +171,7 @@ __WEAK__ __softboundcets_trie_entry_t* __softboundcets_trie_allocate(){
 
   __softboundcets_trie_entry_t* secondary_entry;
   size_t length = (__SOFTBOUNDCETS_TRIE_SECONDARY_TABLE_ENTRIES) * sizeof(__softboundcets_trie_entry_t);
-  secondary_entry = __softboundcets_safe_mmap(0, length, PROT_READ| PROT_WRITE,
+  secondary_entry = __softboundcets_unchecked_mmap(0, length, PROT_READ| PROT_WRITE,
                 SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
   return secondary_entry;
 }
@@ -274,63 +263,6 @@ __softboundcets_allocation_secondary_trie_allocate(void* addr_of_ptr) {
 }
 
 __WEAK__ void
-__softboundcets_add_to_free_map(size_t ptr_key, void* ptr) {
-  if(!__SOFTBOUNDCETS_FREE_MAP)
-    return;
-
-  assert(ptr!= NULL);
-
-  size_t counter  = 0;
-  while(1){
-    size_t index = (ptr_key + counter) % __SOFTBOUNDCETS_N_FREE_MAP_ENTRIES;
-    size_t* entry_ptr = &__softboundcets_free_map_table[index];
-    size_t tag = *entry_ptr;
-
-    if(tag == 0 || tag == 2) {
-      //      printf("entry_ptr=%zx, ptr=%zx, key=%zx\n", entry_ptr, ptr, ptr_key);
-      *entry_ptr = (size_t)(ptr);
-      return;
-    }
-    if(counter >= (__SOFTBOUNDCETS_N_FREE_MAP_ENTRIES)) {
-      __softboundcets_abort();
-    }
-    counter++;
-  }
-  return;
-}
-
-__WEAK__ void
-__softboundcets_check_remove_from_free_map(size_t ptr_key, void* ptr) {
-
-  if(! __SOFTBOUNDCETS_FREE_MAP){
-    return;
-  }
-
-  size_t counter = 0;
-  while(1) {
-    size_t index = (ptr_key + counter) % __SOFTBOUNDCETS_N_FREE_MAP_ENTRIES;
-    size_t* entry_ptr = &__softboundcets_free_map_table[index];
-    size_t tag = *entry_ptr;
-
-    if(tag == 0) {
-      __softboundcets_abort();
-    }
-
-    if(tag == (size_t) ptr) {
-      *entry_ptr = 2;
-      return;
-    }
-
-    if(counter >= __SOFTBOUNDCETS_N_FREE_MAP_ENTRIES) {
-      printf("free map out of entries\n");
-      __softboundcets_abort();
-    }
-    counter++;
-  }
-  return;
-}
-
-__WEAK__ void
 __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 
   size_t temp_id = __softboundcets_key_id_counter++;
@@ -338,10 +270,6 @@ __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
   *((size_t**) ptr_lock) = (size_t*)__softboundcets_allocate_lock_location();
   *((size_t*) ptr_key) = temp_id;
   **((size_t**) ptr_lock) = temp_id;
-
-  if (__SOFTBOUNDCETS_FREE_MAP) {
-    __softboundcets_add_to_free_map(temp_id, ptr);
-  }
 
   __softboundcets_allocation_secondary_trie_allocate(ptr);
 
@@ -386,7 +314,6 @@ __softboundcets_shrink_bounds(void* new_base, void* new_bound,
 
 __WEAK__ void
 __softboundcets_read_shadow_stack_metadata_store(char** endptr, int arg_num) {
-
     void* nptr_base = __softboundcets_load_base_shadow_stack(arg_num);
     void* nptr_bound = __softboundcets_load_bound_shadow_stack(arg_num);
     size_t nptr_key = __softboundcets_load_key_shadow_stack(arg_num);
@@ -398,55 +325,56 @@ __softboundcets_read_shadow_stack_metadata_store(char** endptr, int arg_num) {
 __WEAK__ void
 __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
                                                      int to_argnum) {
-
   void* base = __softboundcets_load_base_shadow_stack(from_argnum);
   void* bound = __softboundcets_load_bound_shadow_stack(from_argnum);
   size_t key = __softboundcets_load_key_shadow_stack(from_argnum);
   void* lock = __softboundcets_load_lock_shadow_stack(from_argnum);
-
   __softboundcets_store_base_shadow_stack(base, to_argnum);
   __softboundcets_store_bound_shadow_stack(bound, to_argnum);
   __softboundcets_store_key_shadow_stack(key, to_argnum);
   __softboundcets_store_lock_shadow_stack(lock, to_argnum);
-
 }
 
 __WEAK__ void __softboundcets_store_null_return_metadata() {
-
   __softboundcets_store_base_shadow_stack(NULL, 0);
   __softboundcets_store_bound_shadow_stack(NULL, 0);
   __softboundcets_store_key_shadow_stack(0, 0);
   __softboundcets_store_lock_shadow_stack(NULL, 0);
-
 }
 
 __WEAK__ void
 __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
                                       void* lock) {
-
   __softboundcets_store_base_shadow_stack(base, 0);
   __softboundcets_store_bound_shadow_stack(bound, 0);
   __softboundcets_store_key_shadow_stack(key, 0);
   __softboundcets_store_lock_shadow_stack(lock, 0);
-
 }
 
-void* __softboundcets_safe_calloc(size_t nmemb, size_t size){
+__WEAK__ void
+__softboundcets_store_dontcare_return_metadata() {
+  __softboundcets_store_base_shadow_stack(NULL, 0);
+  __softboundcets_store_bound_shadow_stack((void*)UINT_MAX, 0);
+  __softboundcets_store_key_shadow_stack(1, 0);
+  __softboundcets_store_lock_shadow_stack(__softboundcets_global_lock, 0);
+}
+
+void* __softboundcets_unchecked_calloc(size_t nmemb, size_t size){
 
   return calloc(nmemb, size);
 }
 
-void* __softboundcets_safe_malloc(size_t size){
+void* __softboundcets_unchecked_malloc(size_t size){
 
   return malloc(size);
 }
 
-void __softboundcets_safe_free(void* ptr){
+void __softboundcets_unchecked_free(void* ptr){
 
   free(ptr);
 }
 
-void * __softboundcets_safe_mmap(void* addr,
+void * __softboundcets_unchecked_mmap(void* addr,
                                  size_t length, int prot,
                                  int flags, int fd,
                                  off_t offset){

@@ -70,17 +70,6 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
 __WEAK__ void*
 __softboundcets_get_global_lock();
 
-__WEAK__ void
-__softboundcets_introspect_metadata(void* ptr,
-                                    void* base,
-                                    void* bound,
-                                    int arg_no);
-
-__WEAK__ void
-__softboundcets_copy_metadata(void* dest,
-                              void* from,
-                              size_t size);
-
 /* Shadow stack routines */
 
 __WEAK__ void
@@ -126,9 +115,6 @@ __softboundcets_destroy_stack_key(size_t ptr_key);
 
 /* Metadata routines */
 
-__WEAK__ void*
-__softboundcets_metadata_map(void* addr_of_ptr);
-
 __WEAK__ void
 __softboundcets_metadata_load(void* addr_of_ptr,
                               void** base,
@@ -143,12 +129,11 @@ __softboundcets_metadata_store(void* addr_of_ptr,
                                size_t key,
                                void* lock);
 
-/* Miscellaneous routines */
-
 __WEAK__ void
-__softboundcets_spatial_call_dereference_check(void* base,
-                                               void* bound,
-                                               void* ptr);
+__softboundcets_metadata_copy(void* dest, void* from, size_t size);
+
+
+/* Miscellaneous routines */
 
 __WEAK__ void
 __softboundcets_memcopy_check(void* dest, void* src, size_t size,
