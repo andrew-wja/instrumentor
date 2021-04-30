@@ -1,6 +1,6 @@
 .PHONY: all ensure-submodules build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor clean
 
-all: ensure-submodules build-llvm build-runtimes build-instrumentor
+all: ensure-submodules build-llvm build-release-runtimes build-instrumentor
 
 ensure-submodules:
 	git submodule update --init --recursive
