@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-//Just allocate a buffer of size 10
 char * foo() {
   char *f = (char *)malloc(sizeof(char) * 10);
   for (int i = 0; i < 10; i++)
@@ -19,24 +18,20 @@ void print(char* str) {
 }
 
 int main(int argc, char * argv[]) {
-  char * some_ptr = foo();
-  char * some_ptr2 = foo();
-  char * some_ptr3 = foo();
+  char * ptr1 = foo();
+  char * ptr2 = foo();
+  char * ptr3 = foo();
 
   // this should trigger a failure
-  //~ bad(some_ptr2);
+  bad(ptr2);
 
-  print(some_ptr);
-  print(some_ptr2);
-  print(some_ptr3);
+  print(ptr1);
+  print(ptr2);
+  print(ptr3);
 
-  free(some_ptr);
-  free(some_ptr2);
-  free(some_ptr3);
-
-  //~ print(some_ptr);
-  //~ print(some_ptr2);
-  //~ print(some_ptr3);
+  free(ptr1);
+  free(ptr2);
+  free(ptr3);
 
   return 0;
 }
