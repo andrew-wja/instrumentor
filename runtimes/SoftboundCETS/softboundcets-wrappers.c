@@ -125,9 +125,8 @@ softboundcets_tmpfile(void) {
 __WEAK__ DIR*
 softboundcets_fdopendir(int fd) {
   void* ret_ptr = (void*) fdopendir(fd);
-  void* ret_ptr_bound = (char *) ret_ptr + 1024 * 1024;
-    __softboundcets_store_return_metadata(ret_ptr, ret_ptr_bound,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return (DIR*)ret_ptr;
 }
 
@@ -141,16 +140,16 @@ softboundcets_mkdtemp(char *template) {
 __WEAK__ struct lconv*
 softboundcets_localeconv(void) {
   struct lconv* temp = localeconv();
-  __softboundcets_store_return_metadata(temp, temp + 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(temp);
   return temp;
 }
 
 __WEAK__ struct tm*
 softboundcets_gmtime(const time_t *timep) {
   struct tm * temp = gmtime(timep);
-  __softboundcets_store_return_metadata(temp, temp + 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(temp);
   return temp;
 }
 
@@ -166,32 +165,32 @@ softboundcets_bsearch(const void *key, const void *base,
 __WEAK__ struct group*
 softboundcets_getgrnam(const char *name) {
   void* ret_ptr = getgrnam(name);
-  __softboundcets_store_return_metadata(ret_ptr, (char*) ret_ptr + 1024 * 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
 __WEAK__ struct passwd*
 softboundcets_getpwnam(const char *name) {
   void* ret_ptr = getpwnam(name);
-  __softboundcets_store_return_metadata(ret_ptr, (char*) ret_ptr + 1024 * 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
 __WEAK__ struct passwd*
 softboundcets_getpwuid(uid_t uid) {
   void* ret_ptr= getpwuid(uid);
-  __softboundcets_store_return_metadata(ret_ptr, (char*) ret_ptr + 1024 * 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
 __WEAK__ struct group*
 softboundcets_getgrgid(gid_t gid) {
   void* ret_ptr = getgrgid(gid);
-  __softboundcets_store_return_metadata(ret_ptr, (char*) ret_ptr + 1024 * 1024,
-                                        1, (void*) __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
@@ -235,11 +234,8 @@ softboundcets_readdir(DIR* dir) {
 __WEAK__ DIR*
 softboundcets_opendir(const char* name) {
   void* ret_ptr = opendir(name);
-  // FIXME: don't know sizeof DIR!
-  size_t sizeofDIR = 1024*1024;
-  void* ret_ptr_bound = (char*) ret_ptr + sizeofDIR;
-  __softboundcets_store_return_metadata(ret_ptr, ret_ptr_bound,
-                                        1,  (void*)__softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return (DIR*)ret_ptr;
 }
 
@@ -741,43 +737,35 @@ softboundcets___errno_location() {
   return ret_ptr;
 }
 
-// FIXME: these below seem... wrong. Are they really always allocating 1MiB?
-
 __WEAK__ unsigned short const**
 softboundcets___ctype_b_loc(void) {
   unsigned short const** ret_ptr =__ctype_b_loc();
-  __softboundcets_store_return_metadata((void*) ret_ptr,
-                                        (void*)
-                                        ((char*) ret_ptr + 1024*1024),
-                                        1, __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
 __WEAK__ int const**
 softboundcets___ctype_toupper_loc(void) {
   int const ** ret_ptr  =  __ctype_toupper_loc();
-  __softboundcets_store_return_metadata((void*) ret_ptr,
-                                        (void*)
-                                        ((char*)ret_ptr + 1024*1024),
-                                        1, __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
 __WEAK__ int const**
 softboundcets___ctype_tolower_loc(void) {
   int const ** ret_ptr  =  __ctype_tolower_loc();
-  __softboundcets_store_return_metadata((void*) ret_ptr,
-                                        (void*) ((char*)ret_ptr + 1024*1024),
-                                        1, __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 
-__WEAK__
-char * softboundcets_nl_langinfo(nl_item item){
+__WEAK__ char*
+softboundcets_nl_langinfo(nl_item item){
   char* ret_ptr = nl_langinfo(item);
-  __softboundcets_store_return_metadata(ret_ptr,
-                                        ret_ptr + 1024*1024,
-                                        1, __softboundcets_global_lock);
+  // FIXME: overflow allowed because bound is unknown
+  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
   return ret_ptr;
 }
 

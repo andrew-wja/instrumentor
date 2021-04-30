@@ -164,6 +164,9 @@ __WEAK__ void
 __softboundcets_dummy();
 
 __WEAK__ void
+__softboundcets_metadata_copy(void* dest, void* from, size_t size);
+
+__WEAK__ void
 __softboundcets_shrink_bounds(void* new_base, void* new_bound,
                               void* old_base, void* old_bound,
                               void** base_alloca, void** bound_alloca);
@@ -184,6 +187,9 @@ __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
 
 __WEAK__ void
 __softboundcets_store_dontcare_return_metadata();
+
+__WEAK__ void
+__softboundcets_store_dontcare_base_return_metadata(void* base);
 
 void*
 __softboundcets_unchecked_calloc(size_t, size_t);

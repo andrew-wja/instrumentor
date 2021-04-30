@@ -121,9 +121,6 @@ __softboundcets_metadata_store(void* addr_of_ptr,
                                size_t key,
                                void* lock) {}
 
-__WEAK__
-void __softboundcets_metadata_copy(void* dest, void* from, size_t size) {}
-
 /* Miscellaneous routines */
 
 __WEAK__ void

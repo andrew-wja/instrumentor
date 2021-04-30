@@ -79,9 +79,9 @@ ignoredFunctions = Data.Set.fromList $ map mkName [
   "__overflow", "pipe", "printf", "puts", "safe_calloc", "safe_free",
   "safe_malloc", "safe_mmap", "safe_read", "scanf", "select", "_setjmp",
   "setuid", "__shrinkBounds", "snprintf", "sprintf", "sscanf", "__strcspn_c2",
-  "__stroul_internal", "__strspn_c2", "__strtod_internal", "__strtol_internal",
-  "__strtoul_internal", "__uflow", "vasprintf", "vfprintf", "vsnprintf",
-  "vsprintf", "waitpid", "wprintf" ]
+  "__strdup", "__stroul_internal", "__strspn_c2", "__strtod_internal",
+  "__strtol_internal", "__strtoul_internal", "__uflow", "vasprintf",
+  "vfprintf", "vsnprintf", "vsprintf", "waitpid", "wprintf" ]
 
 wrappedFunctions :: Set Name
 wrappedFunctionNames :: Map Name Name
