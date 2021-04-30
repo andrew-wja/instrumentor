@@ -1,4 +1,4 @@
-//=== softboundcets-dummy.c - no-op implementation of public interface functions--*- C -*===//
+//=== softboundcets-dummy.c - no-fail implementation of public interface functions --*- C -*===//
 // Copyright (c) 2021 Andrew Anderson. All rights reserved.
 
 // Developed by: Andrew Anderson, Trinity College Dublin
@@ -67,43 +67,124 @@ __softboundcets_get_global_lock(){
   return __softboundcets_global_lock;
 }
 
+
 /* Shadow stack routines */
 
 __WEAK__ void
-__softboundcets_allocate_shadow_stack_space(int num_pointer_args) {}
+__softboundcets_allocate_shadow_stack_space(int num_pointer_args) {
+
+  size_t* prev_stack_size_ptr = __softboundcets_shadow_stack_ptr + 1;
+  size_t prev_stack_size = *((size_t*)prev_stack_size_ptr);
+
+  __softboundcets_shadow_stack_ptr = __softboundcets_shadow_stack_ptr + prev_stack_size + 2;
+
+  *((size_t*) __softboundcets_shadow_stack_ptr) = prev_stack_size;
+  size_t* current_stack_size_ptr = __softboundcets_shadow_stack_ptr + 1;
+  ssize_t size = num_pointer_args * __SOFTBOUNDCETS_METADATA_NUM_FIELDS;
+  *((size_t*) current_stack_size_ptr) = size;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_deallocate_shadow_stack_space() {}
+__softboundcets_deallocate_shadow_stack_space() {
+  size_t* reserved_space_ptr = __softboundcets_shadow_stack_ptr;
+  size_t read_value = *((size_t*) reserved_space_ptr);
+  assert((read_value >=0 && read_value <= __SOFTBOUNDCETS_SHADOW_STACK_ENTRIES));
+  __softboundcets_shadow_stack_ptr =  __softboundcets_shadow_stack_ptr - read_value - 2;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_store_base_shadow_stack(void* base, int arg_no) {}
+__softboundcets_store_base_shadow_stack(void* base,
+                                                           int arg_no) {
+  assert(arg_no >= 0);
+  size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __BASE_INDEX;
+  void** base_ptr = (void**)(__softboundcets_shadow_stack_ptr + count);
+  *(base_ptr) = base;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_store_bound_shadow_stack(void* bound, int arg_no) {}
+__softboundcets_store_bound_shadow_stack(void* bound,
+                                                            int arg_no) {
+  assert(arg_no >= 0);
+  size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __BOUND_INDEX;
+  void** bound_ptr = (void**)(__softboundcets_shadow_stack_ptr + count);
+  *(bound_ptr) = bound;
+  return;
+}
 
 __WEAK__ void*
-__softboundcets_load_base_shadow_stack(int arg_no) { return NULL; }
+__softboundcets_load_base_shadow_stack(int arg_no) {
+  assert (arg_no >= 0 );
+  size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __BASE_INDEX;
+  size_t* base_ptr = (__softboundcets_shadow_stack_ptr + count);
+  void* base = *((void**)base_ptr);
+  return base;
+}
 
 __WEAK__ void*
-__softboundcets_load_bound_shadow_stack(int arg_no) { return NULL; }
+__softboundcets_load_bound_shadow_stack(int arg_no) {
+  assert (arg_no >= 0 );
+  size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS  + __BOUND_INDEX;
+  size_t* bound_ptr = (__softboundcets_shadow_stack_ptr + count);
+  void* bound = *((void**)bound_ptr);
+  return bound;
+}
 
 __WEAK__ size_t
-__softboundcets_load_key_shadow_stack(int arg_no) { return 0; }
+__softboundcets_load_key_shadow_stack(int arg_no) {
+  assert (arg_no >= 0 );
+  size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS  + __KEY_INDEX;
+  size_t* key_ptr = (__softboundcets_shadow_stack_ptr + count);
+  size_t key = *key_ptr;
+  return key;
+}
 
 __WEAK__ void*
-__softboundcets_load_lock_shadow_stack(int arg_no) { return NULL; }
+__softboundcets_load_lock_shadow_stack(int arg_no) {
+  assert (arg_no >= 0 );
+  size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __LOCK_INDEX;
+  size_t* lock_ptr = (__softboundcets_shadow_stack_ptr + count);
+  void* lock = *((void**)lock_ptr);
+  return lock;
+}
 
 __WEAK__ void
-__softboundcets_store_key_shadow_stack(size_t key, int arg_no) {}
+__softboundcets_store_key_shadow_stack(size_t key,
+                                                          int arg_no) {
+  assert(arg_no >= 0);
+  size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __KEY_INDEX;
+  size_t* key_ptr = (__softboundcets_shadow_stack_ptr + count);
+  *(key_ptr) = key;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_store_lock_shadow_stack(void* lock, int arg_no) {}
+__softboundcets_store_lock_shadow_stack(void* lock,
+                                                           int arg_no) {
+  assert(arg_no >= 0);
+  size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __LOCK_INDEX;
+  void** lock_ptr = (void**)(__softboundcets_shadow_stack_ptr + count);
+  *(lock_ptr) = lock;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {}
+__softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
+  size_t temp_id = __softboundcets_key_id_counter++;
+  *((size_t**) ptr_lock) = (size_t*)__softboundcets_stack_temporal_space_begin++;
+  *((size_t*)ptr_key) = temp_id;
+  **((size_t**)ptr_lock) = temp_id;
+  return;
+}
 
 __WEAK__ void
-__softboundcets_destroy_stack_key(size_t ptr_key){}
+__softboundcets_destroy_stack_key(size_t ptr_key){
+  __softboundcets_stack_temporal_space_begin--;
+  *(__softboundcets_stack_temporal_space_begin) = 0;
+  return;
+}
 
 /* Metadata routines */
 
@@ -112,14 +193,102 @@ __softboundcets_metadata_load(void* addr_of_ptr,
                               void** base,
                               void** bound,
                               size_t* key,
-                              void** lock) {}
+                              void** lock) {
+
+  if(addr_of_ptr == NULL) {
+    *((void**) base) = NULL;
+    *((void**) bound) = NULL;
+    *((size_t*) key) = 0;
+    *((void**) lock) = NULL;
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                            addr_of_ptr, *((void**) base), *((void**) bound),
+                            *((size_t*) key), *((void**) lock));
+#endif
+    return;
+  }
+
+  size_t ptr = (size_t) addr_of_ptr;
+  __softboundcets_trie_entry_t* trie_secondary_table;
+
+  size_t primary_index = ( ptr >> 25);
+  trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
+
+  if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
+    if(trie_secondary_table == NULL) {
+      *((void**) base) = NULL;
+      *((void**) bound) = NULL;
+      *((size_t*) key ) = 0;
+      *((void**) lock) = NULL;
+      return;
+    }
+  }
+
+  size_t secondary_index = ((ptr >> 3) & 0x3fffff);
+  __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
+
+  assert(entry_ptr && "[metadata_load] lookup failed for input pointer");
+
+  *((void**) base) = entry_ptr->base;
+  *((void**) bound) = entry_ptr->bound;
+  *((size_t*) key) = entry_ptr->key;
+  *((void**) lock) = (void*) entry_ptr->lock;
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[metadata_load] ptr_addr=%p, ptr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                          addr_of_ptr, *((void **)addr_of_ptr), entry_ptr->base, entry_ptr->bound,
+                          entry_ptr->key, entry_ptr->lock);
+#endif
+  return;
+}
 
 __WEAK__ void
 __softboundcets_metadata_store(void* addr_of_ptr,
                                void* base,
                                void* bound,
                                size_t key,
-                               void* lock) {}
+                               void* lock) {
+
+  if(addr_of_ptr == NULL) {
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_store] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
+                            addr_of_ptr, *((void**) base), *((void**) bound),
+                            *((size_t*) key), *((void**) lock));
+#endif
+    return;
+  }
+
+  size_t ptr = (size_t) addr_of_ptr;
+  size_t primary_index;
+  __softboundcets_trie_entry_t* trie_secondary_table;
+
+  primary_index = (ptr >> 25);
+  trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
+
+  if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
+    if(trie_secondary_table == NULL){
+      trie_secondary_table =  __softboundcets_trie_allocate();
+      __softboundcets_trie_primary_table[primary_index] = trie_secondary_table;
+    }
+    assert(trie_secondary_table != NULL);
+  }
+
+  size_t secondary_index = ((ptr >> 3) & 0x3fffff);
+  __softboundcets_trie_entry_t* entry_ptr =&trie_secondary_table[secondary_index];
+
+  entry_ptr->base = base;
+  entry_ptr->bound = bound;
+  entry_ptr->key = key;
+  entry_ptr->lock = lock;
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[metadata_store] ptr_addr=%p, ptr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
+                          addr_of_ptr, *((void **)addr_of_ptr), entry_ptr->base, entry_ptr->bound,
+                          entry_ptr->key, entry_ptr->lock, *((size_t*) (entry_ptr->lock)));
+#endif
+
+  return;
+}
 
 /* Miscellaneous routines */
 
