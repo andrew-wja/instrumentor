@@ -29,7 +29,7 @@ LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$PA
 Alternatively, if you have build the executable for distribution, say
 
 ```
-LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$PATH dist/instrumentor target.bc
+LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) dist/instrumentor target.bc
 ```
 
 To play with a simple example, `make -B run-test run-dummy-instrumented
