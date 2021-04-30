@@ -1,3 +1,47 @@
+//=== softboundcets-init.c- SoftBound runtime init --*- C -*===//
+// Copyright (c) 2015 Santosh Nagarakatte. All rights reserved.
+
+// Developed by: Santosh Nagarakatte, Rutgers University
+//               http://www.cs.rutgers.edu/~santosh.nagarakatte/softbound/
+
+// Extended by: Andrew Anderson, Trinity College Dublin
+//              https://scss.tcd.ie/~andersan
+
+// The  SoftBoundCETS project had contributions from:
+// Santosh Nagarakatte, Rutgers University,
+// Milo M K Martin, University of Pennsylvania,
+// Steve Zdancewic, University of Pennsylvania,
+// Jianzhou Zhao, University of Pennsylvania
+
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal with the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+//   1. Redistributions of source code must retain the above copyright notice,
+//      this list of conditions and the following disclaimers.
+
+//   2. Redistributions in binary form must reproduce the above copyright
+//      notice, this list of conditions and the following disclaimers in the
+//      documentation and/or other materials provided with the distribution.
+
+//   3. Neither the names of its developers nor the names of its
+//      contributors may be used to endorse or promote products
+//      derived from this software without specific prior written
+//      permission.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+// CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// WITH THE SOFTWARE.
+//===---------------------------------------------------------------------===//
+
 #if defined(__linux__)
 #include <malloc.h>
 #endif
@@ -16,7 +60,7 @@ __softboundcets_init(void) {
   softboundcets_initialized = 1;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
-    __softboundcets_printf("Initializing softboundcets metadata space\n");
+    __softboundcets_printf("Initializing softboundcets runtime metadata storage\n");
 #endif
 
   assert(sizeof(__softboundcets_trie_entry_t) >= 16);
@@ -32,23 +76,18 @@ __softboundcets_init(void) {
   assert(__softboundcets_lock_new_location != (void*) -1);
   __softboundcets_temporal_space_begin = (size_t *)__softboundcets_lock_new_location;
 
-
   size_t stack_temporal_table_length = (__SOFTBOUNDCETS_N_STACK_TEMPORAL_ENTRIES) * sizeof(void*);
   __softboundcets_stack_temporal_space_begin = mmap(0, stack_temporal_table_length,
                                                     PROT_READ| PROT_WRITE,
                                                     SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
   assert(__softboundcets_stack_temporal_space_begin != (void*) -1);
 
-
   size_t global_lock_size = (__SOFTBOUNDCETS_N_GLOBAL_LOCK_SIZE) * sizeof(void*);
   __softboundcets_global_lock = mmap(0, global_lock_size,
                                      PROT_READ|PROT_WRITE,
                                      SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
   assert(__softboundcets_global_lock != (void*) -1);
-  //  __softboundcets_global_lock =  __softboundcets_lock_new_location++;
   *((size_t*)__softboundcets_global_lock) = 1;
-
-
 
   size_t shadow_stack_size = __SOFTBOUNDCETS_SHADOW_STACK_ENTRIES * sizeof(size_t);
   __softboundcets_shadow_stack_ptr = mmap(0, shadow_stack_size,
@@ -69,7 +108,6 @@ __softboundcets_init(void) {
 
   int* temp = malloc(1);
   __softboundcets_allocation_secondary_trie_allocate_range(0, (size_t)temp);
-
 }
 
 static __attribute__ ((__constructor__)) void __softboundcets_global_init() {

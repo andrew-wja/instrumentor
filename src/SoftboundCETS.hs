@@ -368,8 +368,7 @@ instrument m = do
       -- If we're loading a pointer from memory then we also need to load the
       -- metadata for that pointer from the runtime, and record the local variables
       -- holding that metadata in the symbol table.
-      | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) n) _ _ _) <- o = do
-        stackAllocs <- gets stackAllocations
+      | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) _) _ _ _) <- o = do
         (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer addr
         -- Check the load is spatially in bounds
         (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
@@ -457,8 +456,7 @@ instrument m = do
       -- If we ever store a pointer to memory, we need to record the metadata
       -- for that pointer in the runtime, so that it can be looked up by whoever
       -- loads it back from memory later.
-      | (Store _ tgt@(LocalReference (PointerType (PointerType {}) _) n) src@(LocalReference ty@(PointerType {}) _) _ _ _) <- o = do
-        stackAllocs <- gets stackAllocations
+      | (Store _ tgt@(LocalReference (PointerType (PointerType {}) _) _) src@(LocalReference ty@(PointerType {}) _) _ _ _) <- o = do
         (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- getMetadataForPointer tgt
         -- Check the store is spatially in bounds
         (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
