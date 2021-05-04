@@ -25,6 +25,9 @@ test: test.ll
 run-test: test
 	./test
 
+debug-test: test
+	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) gdb test
+
 
 # Instrumented version of the test program
 instrumented.ll: test.ll
@@ -43,6 +46,9 @@ instrumented: instrumented.ll
 run-instrumented: instrumented
 	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./instrumented
 
+debug-instrumented: instrumented
+	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) gdb instrumented
+
 
 # Instrumented version of the test program linked with a dummy runtime that does no checking (for debugging purposes)
 dummy-instrumented: instrumented.ll
@@ -50,3 +56,6 @@ dummy-instrumented: instrumented.ll
 
 run-dummy-instrumented: dummy-instrumented
 	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./dummy-instrumented
+
+debug-dummy-instrumented: dummy-instrumented
+	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) gdb dummy-instrumented

@@ -107,7 +107,12 @@ __softboundcets_init(void) {
   assert(__softboundcets_trie_primary_table != (void *)-1);
 
   int* temp = malloc(1);
+  __softboundcets_malloc_start_address = temp;
   __softboundcets_allocation_secondary_trie_allocate_range(0, (size_t)temp);
+
+#if defined(__linux__)
+  mallopt(M_MMAP_MAX, 0);
+#endif
 }
 
 static __attribute__ ((__constructor__)) void __softboundcets_global_init() {
@@ -161,37 +166,26 @@ int main(int argc, char **argv) {
     __softboundcets_global_init();
   }
 
-  char** new_argv = argv;
   size_t argv_key;
-  void* argv_loc;
+  void* argv_lock;
+  __softboundcets_create_stack_key(&argv_lock, &argv_key);
 
-  int* temp = (int*)malloc(1);
-  __softboundcets_malloc_start_address = temp;
-  __softboundcets_allocation_secondary_trie_allocate_range(0, (size_t)temp);
-  __softboundcets_create_stack_key(&argv_loc, &argv_key);
-
-#if defined(__linux__)
-  mallopt(M_MMAP_MAX, 0);
-#endif
+  char** new_argv = argv;
 
   for(int i = 0; i < argc; i++) {
     __softboundcets_metadata_store(&new_argv[i],
                                    new_argv[i],
                                    new_argv[i] + strlen(new_argv[i]) + 1,
-                                   argv_key, argv_loc);
+                                   argv_key, argv_lock);
   }
 
   softboundcets_init_ctype();
 
-  // Santosh: Real Nasty Hack because C programmers assume argv[argc] is NULL.
-
-  char* temp_ptr = ((char*) &new_argv[argc]) + sizeof(char*);
-
   __softboundcets_allocate_shadow_stack_space(2);
   __softboundcets_store_base_shadow_stack(&new_argv[0], 1);
-  __softboundcets_store_bound_shadow_stack(temp_ptr, 1);
+  __softboundcets_store_bound_shadow_stack((&new_argv[argc-1])+2, 1);
   __softboundcets_store_key_shadow_stack(argv_key, 1);
-  __softboundcets_store_lock_shadow_stack(argv_loc, 1);
+  __softboundcets_store_lock_shadow_stack(argv_lock, 1);
   int return_value = softboundcets_main(argc, new_argv);
   __softboundcets_deallocate_shadow_stack_space();
   __softboundcets_destroy_stack_key(argv_key);

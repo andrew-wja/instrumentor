@@ -44,6 +44,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <assert.h>
 #if defined(__linux__)
 #include <malloc.h>
@@ -368,7 +369,7 @@ __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
 __WEAK__ void
 __softboundcets_store_dontcare_return_metadata() {
   __softboundcets_store_base_shadow_stack(NULL, 0);
-  __softboundcets_store_bound_shadow_stack((void*)UINT_MAX, 0);
+  __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
   __softboundcets_store_key_shadow_stack(1, 0);
   __softboundcets_store_lock_shadow_stack(__softboundcets_global_lock, 0);
 }
@@ -376,7 +377,7 @@ __softboundcets_store_dontcare_return_metadata() {
 __WEAK__ void
 __softboundcets_store_dontcare_base_return_metadata(void* base) {
   __softboundcets_store_base_shadow_stack(base, 0);
-  __softboundcets_store_bound_shadow_stack((void*)UINT_MAX, 0);
+  __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
   __softboundcets_store_key_shadow_stack(1, 0);
   __softboundcets_store_lock_shadow_stack(__softboundcets_global_lock, 0);
 }
