@@ -5,10 +5,11 @@ module SoftboundCETS (instrument) where
 import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
-import Data.Set hiding (map, filter, null, foldr)
+import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr)
 import Data.Maybe (fromJust)
 import Data.String (IsString(..))
+import Data.List (isInfixOf)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -24,9 +25,9 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , functionKey :: Maybe Operand
                                , functionLock :: Maybe Operand
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-                               , stackAllocations :: Set Name
-                               , instrumentationCandidates :: Set Name
-                               , renamingCandidates :: Set Name
+                               , stackAllocations :: Data.Set.Set Name
+                               , instrumentationCandidates :: Data.Set.Set Name
+                               , renamingCandidates :: Data.Set.Set Name
                                , wrapperFunctionPrototypes :: Map String Type
                                , runtimeFunctionPrototypes :: Map String Type
                                }
@@ -69,7 +70,7 @@ initSBCETSState = emptySBCETSState
     ]
   }
 
-ignoredFunctions :: Set Name
+ignoredFunctions :: Data.Set.Set Name
 ignoredFunctions = Data.Set.fromList $ map mkName [
   "asprintf", "compare_pic_by_pic_num_desc", "dup2", "dup", "error", "execlp",
   "execl", "execv", "_exit", "fcntl", "fflush_unlocked", "flockfile", "fork",
@@ -83,7 +84,7 @@ ignoredFunctions = Data.Set.fromList $ map mkName [
   "__strtol_internal", "__strtoul_internal", "__uflow", "vasprintf",
   "vfprintf", "vsnprintf", "vsprintf", "waitpid", "wprintf" ]
 
-wrappedFunctions :: Set Name
+wrappedFunctions :: Data.Set.Set Name
 wrappedFunctionNames :: Map Name Name
 (wrappedFunctions, wrappedFunctionNames) =
   let names = [ --"abort", "abs", "acos", "atan2", "atexit", "atof", "atoi", "atol",
@@ -136,12 +137,18 @@ instrument m = do
                                           return ()
       in (warnings, result)
 
-    functionsToInstrument :: [Definition] -> Set Name
-    functionsToInstrument defs = Data.Set.difference (Data.Set.fromList $ map getFuncName
+    functionsToInstrument :: [Definition] -> Data.Set.Set Name
+    functionsToInstrument defs = Data.Set.filter (not . isInfixOfName "isoc99") $
+                                 Data.Set.filter (not . isInfixOfName "llvm.") $
+                                 Data.Set.difference (Data.Set.fromList $ map getFuncName
                                                                         $ filter isFuncDef
                                                                         $ defs)
                                                      (Data.Set.union ignoredFunctions
                                                                      wrappedFunctions)
+
+    isInfixOfName :: String -> Name -> Bool
+    isInfixOfName s (Name s') = isInfixOf s $ show s'
+    isInfixOfName _ _ = False
 
     isFuncDef (GlobalDefinition (Function {})) = True
     isFuncDef _ = False
@@ -187,7 +194,7 @@ instrument m = do
 
     instrumentFunction _ _ = undefined
 
-    -- Set up the instrumentation of any pointer arguments to the function, and
+    -- Setup the instrumentation of any pointer arguments to the function, and
     -- then branch unconditionally to the first block in the function body.
 
     instrumentPointerArgs fblabel pms = do
