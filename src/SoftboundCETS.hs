@@ -275,7 +275,8 @@ instrument m = do
     instrumentBlocks (first:blocks) = do
       saved <- get
       emitFirstBlock first
-      mapM_ emitBlock blocks
+      saved' <- get
+      mapM_ (\bb -> emitBlock bb >> put saved') blocks
       put saved
 
     -- The first thing we need to do in the main body of any function is to call
@@ -322,11 +323,9 @@ instrument m = do
     -- breaking SSA form by introducing uses not dominated by the definition.
 
     emitBlock (BasicBlock n i t) = do
-      savedMDTable <- gets metadataTable
       emitBlockStart n
       mapM_ instrumentInst i
       instrumentTerm t
-      modify $ \s -> s { metadataTable = savedMDTable }
 
     -- Location 0 in the shadow stack is for metadata about the return value of
     -- a function, when that return value is a pointer. When it is not a pointer,
