@@ -276,13 +276,23 @@ instrument m = do
       keyPtr <- alloca (i64) Nothing 8
       lockPtr <- alloca (ptr i8) Nothing 8
       addr' <- bitcast addr (ptr i8)
-      -- Get the metadata for the pointed-to memory address from the runtime.
       (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                 [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ show x
+
+    getNullMetadata = do
+      nullPtr <- inttoptr (int64 0) (ptr i8)
+      basePtr <- alloca (ptr i8) Nothing 8
+      boundPtr <- alloca (ptr i8) Nothing 8
+      keyPtr <- alloca (i64) Nothing 8
+      lockPtr <- alloca (ptr i8) Nothing 8
+      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      return (basePtr, boundPtr, keyPtr, lockPtr)
 
     instrumentInst i@(v := o)
       | (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
@@ -440,7 +450,11 @@ instrument m = do
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
     emitMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- gets ((! op) . metadataTable)
+      haveMetadata <- gets ((Data.Map.member op) . metadataTable)
+      (basePtr, boundPtr, keyPtr, lockPtr) <- if haveMetadata
+                                              then gets ((! op) . metadataTable)
+                                              else do tell ["Pointer passed to function has no metadata: " ++ show op]
+                                                      getNullMetadata
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
