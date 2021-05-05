@@ -31,7 +31,7 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , runtimeFunctionPrototypes :: Map String Type
 
                                -- metadataTable must be saved and restored around basic block entry and exit,
-                               -- otherwise we will leak cached metadata and potentially violate SSA form.
+                               -- otherwise we will leak metadata identifiers and potentially violate SSA form.
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                }
 
@@ -241,9 +241,11 @@ instrument m = do
       return ()
 
     emitBlock (BasicBlock n i t) = do
+      saved <- gets metadataTable
       emitBlockStart n
       mapM_ instrumentInst i
       instrumentTerm t
+      modify $ \s -> s { metadataTable = saved }
 
     instrumentTerm i@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
       emitMetadataStoreToShadowStack op 0
