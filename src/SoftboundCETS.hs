@@ -330,7 +330,7 @@ instrument m = do
         haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
         when haveMetadata $ do
           ty <- computeIndexedType (typeOf addr) ixs
-          let newPtr = LocalReference ty v
+          let newPtr = LocalReference (ptr ty) v
           newMetadata <- gets ((! addr) . metadataTable)
           modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
