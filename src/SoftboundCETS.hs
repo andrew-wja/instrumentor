@@ -508,6 +508,6 @@ instrument m = do
     computeIndexedType (NamedTypeReference nm) is' = do
       mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
       case mayTy of
-        Nothing -> error $ "Couldn’t resolve typedef for named type: " ++ show nm
+        Nothing -> error $ "Could not resolve typedef for named type: " ++ show nm
         Just ty -> computeIndexedType ty is'
     computeIndexedType t (_:_) = error $ "Can't index into type: " ++ show t
