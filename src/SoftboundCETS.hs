@@ -7,7 +7,7 @@ import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop)
-import Data.Maybe (fromJust)
+import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf)
 import LLVM.AST
@@ -342,9 +342,12 @@ instrument m = do
         haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
         when haveMetadata $ do
           ty <- computeIndexedType (typeOf addr) ixs
-          let newPtr = LocalReference (ptr ty) v
-          newMetadata <- gets ((! addr) . metadataTable)
-          modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
+          -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
+          -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
+          when (isJust ty) $ do
+            let newPtr = LocalReference (ptr $ fromJust ty) v
+            newMetadata <- gets ((! addr) . metadataTable)
+            modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
 
       | (BitCast addr@(LocalReference (PointerType {}) _) ty _) <- o = do
@@ -497,8 +500,8 @@ instrument m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
-    computeIndexedType :: MonadModuleBuilder m => Type -> [Operand] -> m Type
-    computeIndexedType ty [] = pure ty
+    computeIndexedType :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+    computeIndexedType ty [] = pure $ Just ty
     computeIndexedType (PointerType ty _) (_:is') = computeIndexedType ty is'
     computeIndexedType (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
       computeIndexedType (head $ drop (fromIntegral val) elTys) is'
@@ -508,6 +511,6 @@ instrument m = do
     computeIndexedType (NamedTypeReference nm) is' = do
       mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
       case mayTy of
-        Nothing -> error $ "Could not resolve typedef for named type: " ++ show nm
+        Nothing -> pure Nothing
         Just ty -> computeIndexedType ty is'
     computeIndexedType t (_:_) = error $ "Can't index into type: " ++ show t
