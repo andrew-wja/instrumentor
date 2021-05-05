@@ -6,13 +6,14 @@ import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import qualified Data.Set
-import Data.Map hiding (map, filter, null, foldr)
+import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
+import LLVM.AST.Typed (typeOf)
 import qualified LLVM.AST.Constant as Const
 import LLVM.IRBuilder.Constant
 import LLVM.IRBuilder.Instruction
@@ -22,21 +23,22 @@ import LLVM.IRBuilder.Internal.SnocList
 import Utils
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
-                               , functionKey :: Maybe Operand
-                               , functionLock :: Maybe Operand
-                               , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-                               , stackAllocations :: Data.Set.Set Name
+                               , localStackFrameKeyPtr :: Maybe Operand
+                               , localStackFrameLockPtr :: Maybe Operand
                                , instrumentationCandidates :: Data.Set.Set Name
                                , renamingCandidates :: Data.Set.Set Name
                                , wrapperFunctionPrototypes :: Map String Type
                                , runtimeFunctionPrototypes :: Map String Type
+
+                               -- metadataTable must be saved and restored around basic block entry and exit,
+                               -- otherwise we will leak cached metadata and potentially violate SSA form.
+                               , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                }
 
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
-                               Data.Map.empty Data.Set.empty
                                Data.Set.empty Data.Set.empty
-                               Data.Map.empty Data.Map.empty
+                               Data.Map.empty Data.Map.empty Data.Map.empty
 
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
@@ -207,12 +209,213 @@ instrument m = do
         isPointerArg (Parameter (PointerType _ _) _ _) = True
         isPointerArg _ = False
 
+    instrumentBlocks [] = return ()
+
+    instrumentBlocks (first:[]) = do
+      emitFirstBlock first
+
+    instrumentBlocks (first:blocks) = do
+      emitFirstBlock first
+      mapM_ emitBlock blocks
+
+    -- The first thing we need to do in any function is call
+    -- __softboundcets_get_global_lock() to get a pointer to the lock for global
+    -- variables. This allows us to detect use after free of globals.
+    emitFirstBlock (BasicBlock n i t) = do
+      emitBlockStart n
+      (fname, fproto) <- gets ((!! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
+      glp <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname) []
+      modify $ \s -> s { globalLockPtr = Just glp }
+      emitLocalKeyAndLockCreation
+      mapM_ instrumentInst i
+      instrumentTerm t
+
+    -- Create a local key and lock for entities allocated on the stack inside this function
+    emitLocalKeyAndLockCreation = do
+      keyPtr <- alloca i64 Nothing 8
+      lockPtr <- alloca (ptr i8) Nothing 8
+      (fname, fproto) <- gets ((!! "__softboundcets_create_stack_key") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(lockPtr, []), (keyPtr, [])]
+      modify $ \s -> s { localStackFrameKeyPtr = Just keyPtr, localStackFrameLockPtr = Just lockPtr }
+      return ()
+
+    emitBlock (BasicBlock n i t) = do
+      emitBlockStart n
+      mapM_ instrumentInst i
+      instrumentTerm t
+
+    instrumentTerm i@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
+      emitMetadataStoreToShadowStack op 0
+      emitLocalKeyAndLockDestruction
+      emitNamedTerm i
+
+    instrumentTerm i = do
+      emitNamedTerm i
+
+    -- Invalidate the local key; We do this just prior to returning from the function.
+    -- Subsequent use of a leaked stack-allocated variable from inside the function
+    -- will trigger a runtime error with a key mismatch.
+    emitLocalKeyAndLockDestruction = do
+      keyPtr <- liftM fromJust $ gets localStackFrameKeyPtr
+      key <- load keyPtr 0
+      (fname, fproto) <- gets ((!! "__softboundcets_destroy_stack_key") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(key, [])]
+      return ()
+
+    emitNamedTerm t = do
+      modifyBlock $ \bb -> bb
+        { partialBlockTerm = Just t }
+
+    getMetadataForPointee addr@(LocalReference (PointerType _ _) _) = do
+      basePtr <- alloca (ptr i8) Nothing 8
+      boundPtr <- alloca (ptr i8) Nothing 8
+      keyPtr <- alloca (i64) Nothing 8
+      lockPtr <- alloca (ptr i8) Nothing 8
+      addr' <- bitcast addr (ptr i8)
+      -- Get the metadata for the pointed-to memory address from the runtime.
+      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      return (basePtr, boundPtr, keyPtr, lockPtr)
+
+    getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ show x
+
+    instrumentInst i@(v := o)
+      | (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
+        haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
+        when haveMetadata $ do
+          (basePtr, boundPtr, keyPtr, lockPtr) <- gets ((! addr) . metadataTable)
+          base <- load basePtr 0
+          bound <- load boundPtr 0
+          addr' <- bitcast addr (ptr i8)
+          tySize <- sizeof 64 ty
+          -- Check the load is spatially in bounds
+          (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                    [(base, []), (bound, []), (addr', []), (tySize, [])]
+          -- Check the load is temporally in bounds
+          (fname', fproto') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
+          lock <- load lockPtr 0
+          key <- load keyPtr 0
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                    [(lock, []), (key, [])]
+          return ()
+
+        emitNamedInst i
+
+        -- If we just loaded a pointer, fetch the metadata for that pointer.
+        let loadedValueIsPointer = isPointerType ty
+        when loadedValueIsPointer $ do
+          let loadedPtr = LocalReference ty v
+          loadedPtrMetadata <- getMetadataForPointee addr
+          modify $ \s -> s { metadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ metadataTable s }
+
+      -- Instrument a call instruction unless it is calling inline assembly.
+      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
+        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+        zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+        if Data.Set.member fname wrappedFunctions then
+          emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
+        else emitNamedInst i
+        -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
+        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
+        -- Read the pointer metadata for the return value if it is a pointer
+        when (isPointerType rt) $ emitMetadataLoadFromShadowStack (rt, v) 0
+        emitShadowStackDeallocation
+
+      | (GetElementPtr _ addr@(LocalReference (PointerType {}) _) ixs _) <- o = do
+        haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
+        when haveMetadata $ do
+          ty <- computeIndexedType (typeOf addr) ixs
+          let newPtr = LocalReference ty v
+          newMetadata <- gets ((! addr) . metadataTable)
+          modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
+        emitNamedInst i
+
+      | (BitCast addr@(LocalReference (PointerType {}) _) ty _) <- o = do
+        haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
+        when haveMetadata $ do
+          let newPtr = LocalReference ty v
+          newMetadata <- gets ((! addr) . metadataTable)
+          modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
+        emitNamedInst i
+
+      | otherwise = do
+        emitNamedInst i
+
+    instrumentInst i@(Do o)
+      -- This alternative is the non-capturing variant (call ignoring return value, if any).
+      -- We don't need to emit checks for the return value here because it is unused.
+      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
+        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+        zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+        if Data.Set.member fname wrappedFunctions then
+          emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
+        else emitNamedInst i
+        -- the function could deallocate any of the passed pointers so behave as if it has deallocated all of them
+        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
+        emitShadowStackDeallocation
+
+      | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
+        haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
+        when haveTargetMetadata $ do
+          (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- gets ((! tgt) . metadataTable)
+          -- Check the store is spatially in bounds
+          (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
+          tgtBase <- load tgtBasePtr 0
+          tgtBound <- load tgtBoundPtr 0
+          tgtAddr <- bitcast tgt (ptr i8)
+          tySize <- sizeof 64 ty
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                    [(tgtBase, []), (tgtBound, []), (tgtAddr, []), (tySize, [])]
+          -- Check the store is temporally in bounds
+          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
+          tgtKey <- load tgtKeyPtr 0
+          tgtLock <- load tgtLockPtr 0
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                    [(tgtLock, []), (tgtKey, [])]
+          return ()
+
+        emitNamedInst i
+
+        let storedValueIsPointer = isPointerType ty
+        when storedValueIsPointer $ do
+          haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
+          when haveSourceMetadata $ do
+            (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- gets ((! src) . metadataTable)
+            tgtAddr <- bitcast tgt (ptr i8)
+            srcBase <- load srcBasePtr 0
+            srcBound <- load srcBoundPtr 0
+            srcKey <- load srcKeyPtr 0
+            srcLock <- load srcLockPtr 0
+            (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
+            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                        [(tgtAddr, []), (srcBase, []), (srcBound, []), (srcKey, []), (srcLock, [])]
+            return ()
+
+      | otherwise = do
+        emitNamedInst i
+
+    isPointerOperand (LocalReference (PointerType {}) _) = True
+    isPointerOperand _ = False
+
+    isPointerType (PointerType {}) = True
+    isPointerType _ = False
+
+    rewriteCalledFunctionName n (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) =
+      Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
+
+    rewriteCalledFunctionName _ _ = undefined
+
     -- Load the metadata for a pointer function parameter from the shadow stack.
     -- The location of that metadata in the shadow stack is given by the position
     -- of the pointer argument in the list of pointer arguments (starting from one).
     -- The zeroth shadow stack location is reserved for metadata about the return
     -- value, but unused if the return value is not a pointer.
-
     emitMetadataLoadFromShadowStack (localTy, localName) ix = do
       ix' <- pure $ int32 ix
       (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
@@ -234,8 +437,8 @@ instrument m = do
       modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
-    emitPointerMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer op
+    emitMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
+      (basePtr, boundPtr, keyPtr, lockPtr) <- gets ((! op) . metadataTable)
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
@@ -255,279 +458,9 @@ instrument m = do
                 [(lock, []), (ix', [])]
       return ()
 
-    emitPointerMetadataStoreToShadowStack (LocalReference {}) _ = undefined
-    emitPointerMetadataStoreToShadowStack (ConstantOperand {}) _ = undefined
-    emitPointerMetadataStoreToShadowStack (MetadataOperand {}) _ = undefined
-
-    instrumentBlocks [] = return ()
-
-    -- The state of the metadata table is saved prior to instrumenting a function
-    -- and restored immediately afterwards. We can't leak metadata about pointers
-    -- inside a function to the global context, because those pointers might have
-    -- name clashes with pointers in other functions. Saving and restoring the
-    -- metadata table takes care of this nicely.
-
-    instrumentBlocks (first:[]) = do
-      saved <- get
-      emitFirstBlock first
-      put saved
-
-    instrumentBlocks (first:blocks) = do
-      saved <- get
-      emitFirstBlock first
-      saved' <- get
-      mapM_ (\bb -> emitBlock bb >> put saved') blocks
-      put saved
-
-    -- The first thing we need to do in the main body of any function is to call
-    -- __softboundcets_get_global_lock() to get a pointer to the lock for global
-    -- variables. This allows us to detect use after free of globals.
-
-    -- We record the local variable which contains the global lock pointer in
-    -- the state variable globalLockPtr. Hereafter `gets globalLockPtr` will
-    -- give us this variable as an Operand, so that we can pass it to things.
-
-    emitFirstBlock (BasicBlock n i t) = do
-      emitBlockStart n
-      (fname, fproto) <- gets ((!! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
-      glp <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname) []
-      modify $ \s -> s { globalLockPtr = Just glp }
-      emitLocalKeyAndLockCreation
-      mapM_ instrumentInst i
-      instrumentTerm t
-
-    -- Create a local key and lock for entities allocated on the stack inside this function
-
-    emitLocalKeyAndLockCreation = do
-      keyPtr <- alloca i64 Nothing 8
-      lockPtr <- alloca (ptr i8) Nothing 8
-      (fname, fproto) <- gets ((!! "__softboundcets_create_stack_key") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                [(lockPtr, []), (keyPtr, [])]
-      key <- load keyPtr 0
-      modify $ \s -> s { functionKey = Just key, functionLock = Just lockPtr }
-      return ()
-
-    -- Invalidate the local key; We do this just prior to returning from the function.
-    -- Subsequent use of a leaked stack-allocated variable will trigger a runtime error.
-
-    emitLocalKeyAndLockDestruction = do
-      localKey <- gets functionKey
-      (fname, fproto) <- gets ((!! "__softboundcets_destroy_stack_key") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                [(fromJust localKey, [])]
-      return ()
-
-    -- We cannot, in general, allow any cached stack-allocated metadata to
-    -- persist beyond the basic block wherein it was created, or we risk
-    -- breaking SSA form by introducing uses not dominated by the definition.
-
-    emitBlock (BasicBlock n i t) = do
-      emitBlockStart n
-      mapM_ instrumentInst i
-      instrumentTerm t
-
-    -- Location 0 in the shadow stack is for metadata about the return value of
-    -- a function, when that return value is a pointer. When it is not a pointer,
-    -- location 0 in the shadow stack is unused.
-
-    instrumentTerm i@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
-      emitPointerMetadataStoreToShadowStack op 0
-      emitLocalKeyAndLockDestruction
-      emitNamedTerm i
-
-    instrumentTerm i = do
-      emitNamedTerm i
-
-    emitNamedTerm t = do
-      modifyBlock $ \bb -> bb
-        { partialBlockTerm = Just t }
-
-    -- Get the metadata for the given pointer. If the pointer is in the symbol
-    -- table, just return the symbol table entry. Otherwise, ask the runtime for
-    -- the pointer's metadata.
-
-    getMetadataForPointer addr@(LocalReference (PointerType _ _) _) = do
-      isLocal <- gets ((Data.Map.member addr) . metadataTable)
-      if isLocal then do
-        gets ((! addr) . metadataTable)
-      else do
-        basePtr <- alloca (ptr i8) Nothing 8
-        boundPtr <- alloca (ptr i8) Nothing 8
-        keyPtr <- alloca (i64) Nothing 8
-        lockPtr <- alloca (ptr i8) Nothing 8
-        addr' <- bitcast addr (ptr i8)
-        -- Get the metadata for the pointer from the runtime by calling __softboundcets_metadata_load()
-        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-        return (basePtr, boundPtr, keyPtr, lockPtr)
-
-    getMetadataForPointer x@_ = error $ "getMetadataForPointer: expected pointer but saw " ++ show x
-
-    instrumentInst i@(v := o)
-      | (Alloca {}) <- o = do
-        modify $ \s -> s { stackAllocations = Data.Set.insert v $ stackAllocations s }
-        emitNamedInst i
-
-      -- Instrument a load instruction
-      -- If we're loading a pointer from memory then we also need to load the
-      -- metadata for that pointer from the runtime, and record the local variables
-      -- holding that metadata in the symbol table.
-      | (Load _ addr@(LocalReference (PointerType ty@(PointerType _ _) _) _) _ _ _) <- o = do
-        (basePtr, boundPtr, keyPtr, lockPtr) <- getMetadataForPointer addr
-        -- Check the load is spatially in bounds
-        (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
-        addr' <- load addr 0
-        addr'' <- bitcast addr' (ptr i8)
-        base <- load basePtr 0
-        bound <- load boundPtr 0
-        tySize <- sizeof 64 ty
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(base, []), (bound, []), (addr'', []), (tySize, [])]
-        -- Check the load is temporally in bounds
-        (fname', fproto') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
-        lock <- load lockPtr 0
-        key <- load keyPtr 0
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                  [(lock, []), (key, [])]
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
-        emitNamedInst i
-
-      -- Instrument a call instruction unless it is calling inline assembly
-      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
-        -- allocate shadow stack space
-        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-        -- write the pointer metadata into the shadow stack
-        zipWithM_ emitPointerMetadataStoreToShadowStack ptrArgs [1..]
-        -- call the function or call the wrapper if there is one
-        if Data.Set.member fname wrappedFunctions then
-          emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
-        else emitNamedInst i
-        -- the function could deallocate any of the passed pointers
-        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
-        -- read the pointer metadata for the return value if it is a pointer
-        when (isPointerType rt) $ emitMetadataLoadFromShadowStack (rt, v) 0
-        -- deallocate the shadow stack space
-        emitShadowStackDeallocation
-
-      -- Instrument a getelementptr instruction when the operand is not a
-      -- constant or metadata reference. Just propagate the metadata for the
-      -- source pointer through to the destination pointer.
-
-      | (GetElementPtr _ addr@(LocalReference ty@(PointerType {}) _) _ _) <- o = do
-        (base, bound, key, lock) <- getMetadataForPointer addr
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-        emitNamedInst i
-
-      | (BitCast addr@(LocalReference (PointerType {}) _) ty _) <- o = do
-        (base, bound, key, lock) <- getMetadataForPointer addr
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-        emitNamedInst i
-
-      -- Instrument a select instruction if it is selecting between two pointers
-      | (Select cond tval@(LocalReference ty@(PointerType {}) _)
-                     fval@(LocalReference (PointerType {}) _) _) <- o = do
-        (tbase, tbound, tkey, tlock) <- getMetadataForPointer tval
-        (fbase, fbound, fkey, flock) <- getMetadataForPointer fval
-        base <- select cond tbase fbase
-        bound <- select cond tbound fbound
-        key <- select cond tkey fkey
-        lock <- select cond tlock flock
-        modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference ty v) (base, bound, key, lock) $ metadataTable s }
-        emitNamedInst i
-
-      | otherwise = do
-        emitNamedInst i
-
-    instrumentInst i@(Do o)
-      -- Instrument a call instruction unless it is calling inline assembly
-      -- The return value is not captured, so don't emit checks for it
-      | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
-        -- allocate shadow stack space
-        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-        -- write the pointer metadata into the shadow stack
-        zipWithM_ emitPointerMetadataStoreToShadowStack ptrArgs [1..]
-        -- call the function or call the wrapper if there is one
-        if Data.Set.member fname wrappedFunctions then
-          emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
-        else emitNamedInst i
-        -- the function could deallocate any of the passed pointers
-        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
-        -- deallocate the shadow stack space
-        emitShadowStackDeallocation
-
-      -- Instrument a store instruction
-      -- If we ever store a pointer to memory, we need to record the metadata
-      -- for that pointer in the runtime, so that it can be looked up by whoever
-      -- loads it back from memory later.
-      | (Store _ tgt@(LocalReference (PointerType (PointerType {}) _) _) src@(LocalReference ty@(PointerType {}) _) _ _ _) <- o = do
-        (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- getMetadataForPointer tgt
-        -- Check the store is spatially in bounds
-        (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
-        tgtAddr' <- bitcast tgt (ptr $ ptr i8)
-        tgtAddr'' <- load tgtAddr' 0
-        tgtBase <- load tgtBasePtr 0
-        tgtBound <- load tgtBoundPtr 0
-        tySize <- sizeof 64 ty
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(tgtBase, []), (tgtBound, []), (tgtAddr'', []), (tySize, [])]
-        -- Check the store is temporally in bounds
-        (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
-        tgtKey <- load tgtKeyPtr 0
-        tgtLock <- load tgtLockPtr 0
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                  [(tgtLock, []), (tgtKey, [])]
-        -- Write the metadata for the stored pointer
-        (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- getMetadataForPointer src
-        tgtAddr <- bitcast tgt (ptr i8)
-        srcBase <- load srcBasePtr 0
-        srcBound <- load srcBoundPtr 0
-        srcKey <- load srcKeyPtr 0
-        srcLock <- load srcLockPtr 0
-        (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(tgtAddr, []), (srcBase, []), (srcBound, []), (srcKey, []), (srcLock, [])]
-        emitNamedInst i
-
-      -- In this case, we are not storing a pointer, but we are still always
-      -- storing *through* a pointer, so we need to emit the checks
-      | (Store _ tgt@(LocalReference (PointerType ty _) n) _ _ _ _) <- o = do
-        stackAllocs <- gets stackAllocations
-        when (not $ Data.Set.member n stackAllocs) $ do
-          (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- getMetadataForPointer tgt
-          -- Check the store is spatially in bounds
-          (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
-          tgtAddr' <- bitcast tgt (ptr i8)
-          tgtBase <- load tgtBasePtr 0
-          tgtBound <- load tgtBoundPtr 0
-          tySize <- sizeof 64 ty
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                    [(tgtBase, []), (tgtBound, []), (tgtAddr', []), (tySize, [])]
-          -- Check the store is temporally in bounds
-          (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
-          tgtKey <- load tgtKeyPtr 0
-          tgtLock <- load tgtLockPtr 0
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                    [(tgtLock, []), (tgtKey, [])]
-          return ()
-        emitNamedInst i
-
-      | otherwise = do
-        emitNamedInst i
-
-    isPointerOperand (LocalReference (PointerType {}) _) = True
-    isPointerOperand _ = False
-
-    isPointerType (PointerType {}) = True
-    isPointerType _ = False
-
-    rewriteCalledFunctionName n (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) =
-      Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
-
-    rewriteCalledFunctionName _ _ = undefined
+    emitMetadataStoreToShadowStack (LocalReference {}) _ = undefined
+    emitMetadataStoreToShadowStack (ConstantOperand {}) _ = undefined
+    emitMetadataStoreToShadowStack (MetadataOperand {}) _ = undefined
 
     emitShadowStackAllocation numArgs = do
       numArgs' <- pure $ int32 numArgs
@@ -547,3 +480,18 @@ instrument m = do
 
     emitNamedInst (Do i) = do
       emitInstrVoid i
+
+    computeIndexedType :: MonadModuleBuilder m => Type -> [Operand] -> m Type
+    computeIndexedType ty [] = pure ty
+    computeIndexedType (PointerType ty _) (_:is') = computeIndexedType ty is'
+    computeIndexedType (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+      computeIndexedType (head $ drop (fromIntegral val) elTys) is'
+    computeIndexedType (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
+    computeIndexedType (VectorType _ elTy) (_:is') = computeIndexedType elTy is'
+    computeIndexedType (ArrayType _ elTy) (_:is') = computeIndexedType elTy is'
+    computeIndexedType (NamedTypeReference nm) is' = do
+      mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
+      case mayTy of
+        Nothing -> error $ "Couldn’t resolve typedef for named type: " ++ show nm
+        Just ty -> computeIndexedType ty is'
+    computeIndexedType t (_:_) = error $ "Can't index into type: " ++ show t

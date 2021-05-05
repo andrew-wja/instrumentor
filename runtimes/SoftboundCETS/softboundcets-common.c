@@ -317,8 +317,8 @@ __softboundcets_metadata_store(void* addr_of_ptr,
   entry_ptr->lock = lock;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
-  __softboundcets_printf("[metadata_store] ptr_addr=%p, ptr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
-                          addr_of_ptr, *((void **)addr_of_ptr), entry_ptr->base, entry_ptr->bound,
+  __softboundcets_printf("[metadata_store] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p, *lock=%zx\n",
+                          addr_of_ptr, entry_ptr->base, entry_ptr->bound,
                           entry_ptr->key, entry_ptr->lock, *((size_t*) (entry_ptr->lock)));
 #endif
 
