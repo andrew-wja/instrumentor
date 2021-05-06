@@ -375,7 +375,7 @@ instrument m = do
         modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
         emitShadowStackDeallocation
 
-      | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
+      | (Store _ tgt@(LocalReference (PointerType ty _) _) src@(LocalReference {}) _ _ _) <- o = do
         haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
         when haveTargetMetadata $ do
           (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- gets ((! tgt) . metadataTable)
