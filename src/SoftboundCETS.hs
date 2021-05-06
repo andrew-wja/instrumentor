@@ -350,11 +350,11 @@ instrument m = do
         when (not $ isFunctionType ty) $ do
           haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
           when haveMetadata $ do
-            ty <- computeIndexedType (typeOf addr) ixs
+            ty' <- computeIndexedType (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
-            when (isJust ty) $ do
-              let newPtr = LocalReference (ptr $ fromJust ty) v
+            when (isJust ty') $ do
+              let newPtr = LocalReference (ptr $ fromJust ty') v
               newMetadata <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
               modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
