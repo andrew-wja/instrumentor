@@ -375,7 +375,7 @@ instrument m = do
         modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
         emitShadowStackDeallocation
 
-      | (Store _ tgt@(LocalReference (PointerType ty _) _) src@(LocalReference {}) _ _ _) <- o = do
+      | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
         haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
         when haveTargetMetadata $ do
           (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- gets ((! tgt) . metadataTable)
@@ -398,7 +398,8 @@ instrument m = do
         emitNamedInst i
 
         let storedValueIsPointer = isPointerType ty
-        when storedValueIsPointer $ do
+        let storedValueIsHandled = isLocalReference src
+        when storedValueIsPointer && storedValueIsHandled $ do
           haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
           when haveSourceMetadata $ do
             (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- gets ((! src) . metadataTable)
@@ -414,6 +415,9 @@ instrument m = do
 
       | otherwise = do
         emitNamedInst i
+
+    isLocalReference (LocalReference {}) = True
+    isLocalReference _ = False
 
     isPointerOperand (LocalReference (PointerType {}) _) = True
     isPointerOperand _ = False
