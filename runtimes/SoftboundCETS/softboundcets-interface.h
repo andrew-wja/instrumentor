@@ -114,6 +114,11 @@ __WEAK__ void
 __softboundcets_destroy_stack_key(size_t ptr_key);
 
 /* Metadata routines */
+__WEAK__ void
+__softboundcets_metadata_check(void** base,
+                               void** bound,
+                               size_t* key,
+                               void** lock);
 
 __WEAK__ void
 __softboundcets_metadata_load(void* addr_of_ptr,

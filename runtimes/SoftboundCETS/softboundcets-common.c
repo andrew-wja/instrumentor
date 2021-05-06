@@ -42,6 +42,7 @@
 // WITH THE SOFTWARE.
 //===---------------------------------------------------------------------===//
 
+#include <stdint.h>
 #include "softboundcets-internal.h"
 #include "softboundcets-interface.h"
 
@@ -231,6 +232,29 @@ __softboundcets_destroy_stack_key(size_t ptr_key){
 }
 
 __WEAK__ void
+__softboundcets_metadata_check(void** base,
+                               void** bound,
+                               size_t* key,
+                               void** lock) {
+
+  if ((base == NULL)  ||
+      (bound == NULL) ||
+      (key == NULL)   ||
+      (lock == NULL)) {
+    __softboundcets_printf("[metadata_check] corrupt metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p\n",
+                             base, bound, key, lock);
+    __softboundcets_abort();
+
+    if ((*lock) == NULL) {
+      __softboundcets_printf("[metadata_check] corrupt metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p, lock=%p\n",
+                             base, bound, key, lock, (*lock));
+      __softboundcets_abort();
+    }
+  }
+  return;
+}
+
+__WEAK__ void
 __softboundcets_metadata_load(void* addr_of_ptr,
                               void** base,
                               void** bound,
@@ -239,9 +263,9 @@ __softboundcets_metadata_load(void* addr_of_ptr,
 
   if(addr_of_ptr == NULL) {
     *((void**) base) = NULL;
-    *((void**) bound) = NULL;
-    *((size_t*) key) = 0;
-    *((void**) lock) = NULL;
+    *((void**) bound) = (void*)PTRDIFF_MAX;
+    *((size_t*) key) = 1;
+    *((void**) lock) = __softboundcets_global_lock;
 #if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
                             addr_of_ptr, *((void**) base), *((void**) bound),

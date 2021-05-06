@@ -51,6 +51,7 @@ initSBCETSState = emptySBCETSState
 
   , runtimeFunctionPrototypes = Data.Map.fromList [
     ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
+    ("__softboundcets_metadata_check", FunctionType void [(ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
     ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
     ("__softboundcets_metadata_store", FunctionType void [ptr i8, ptr i8, ptr i8, i64, ptr i8] False),
     ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
@@ -284,11 +285,14 @@ instrument m = do
       (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                 [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ show x
 
-    getNullMetadata = do
+    getDCMetadata = do
       nullPtr <- inttoptr (int64 0) (ptr i8)
       basePtr <- alloca (ptr i8) Nothing 8
       boundPtr <- alloca (ptr i8) Nothing 8
@@ -396,6 +400,10 @@ instrument m = do
           haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
           when haveTargetMetadata $ do
             (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
+            -- Check the metadata is valid
+            (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                      [(tgtBasePtr, []), (tgtBoundPtr, []), (tgtKeyPtr, []), (tgtLockPtr, [])]
             -- Check the store is spatially in bounds
             (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
             tgtBase <- load tgtBasePtr 0
@@ -421,6 +429,10 @@ instrument m = do
             haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
             when haveSourceMetadata $ do
               (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- liftM (verifyMetadata i) $ gets ((! src) . metadataTable)
+              -- Check the metadata is valid
+              (fname'', fproto'') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                        [(srcBasePtr, []), (srcBoundPtr, []), (srcKeyPtr, []), (srcLockPtr, [])]
               tgtAddr <- bitcast tgt (ptr i8)
               srcBase <- load srcBasePtr 0
               srcBound <- load srcBoundPtr 0
@@ -482,7 +494,12 @@ instrument m = do
       (basePtr, boundPtr, keyPtr, lockPtr) <- if haveMetadata
                                               then gets ((! op) . metadataTable)
                                               else do tell ["Pointer passed to function has no metadata: " ++ show op]
-                                                      getNullMetadata
+                                                      getDCMetadata
+      -- Check the metadata is valid
+      (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
