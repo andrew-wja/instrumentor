@@ -294,11 +294,18 @@ instrument m = do
                 [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
+    verifyMetadata _ md@(basePtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
+                         boundPtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
+                         keyPtr@(LocalReference (PointerType (IntegerType 64) _) _),
+                         lockPtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _)) = md
+
+    verifyMetadata inst md@_ = error $ "Incorrect types in metadata: " ++ show md ++ " while processing instruction " ++ show inst
+
     instrumentInst i@(v := o)
       | (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
         haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
         when haveMetadata $ do
-          (basePtr, boundPtr, keyPtr, lockPtr) <- gets ((! addr) . metadataTable)
+          (basePtr, boundPtr, keyPtr, lockPtr) <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
           base <- load basePtr 0
           bound <- load boundPtr 0
           addr' <- bitcast addr (ptr i8)
@@ -321,7 +328,7 @@ instrument m = do
         let loadedValueIsPointer = isPointerType ty
         when loadedValueIsPointer $ do
           let loadedPtr = LocalReference ty v
-          loadedPtrMetadata <- getMetadataForPointee addr
+          loadedPtrMetadata <- liftM (verifyMetadata i) $ getMetadataForPointee addr
           modify $ \s -> s { metadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ metadataTable s }
 
       -- Instrument a call instruction unless it is calling inline assembly.
@@ -346,7 +353,7 @@ instrument m = do
           -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
           when (isJust ty) $ do
             let newPtr = LocalReference (ptr $ fromJust ty) v
-            newMetadata <- gets ((! addr) . metadataTable)
+            newMetadata <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
             modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
 
@@ -354,7 +361,7 @@ instrument m = do
         haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
         when haveMetadata $ do
           let newPtr = LocalReference ty v
-          newMetadata <- gets ((! addr) . metadataTable)
+          newMetadata <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
           modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
 
@@ -378,7 +385,7 @@ instrument m = do
       | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
         haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
         when haveTargetMetadata $ do
-          (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- gets ((! tgt) . metadataTable)
+          (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
           -- Check the store is spatially in bounds
           (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
           tgtBase <- load tgtBasePtr 0
@@ -402,7 +409,7 @@ instrument m = do
         when (storedValueIsPointer && storedValueIsHandled) $ do
           haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
           when haveSourceMetadata $ do
-            (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- gets ((! src) . metadataTable)
+            (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- liftM (verifyMetadata i) $ gets ((! src) . metadataTable)
             tgtAddr <- bitcast tgt (ptr i8)
             srcBase <- load srcBasePtr 0
             srcBound <- load srcBoundPtr 0
