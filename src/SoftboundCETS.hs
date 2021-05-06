@@ -294,10 +294,10 @@ instrument m = do
                 [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
-    verifyMetadata _ md@(basePtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
-                         boundPtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
-                         keyPtr@(LocalReference (PointerType (IntegerType 64) _) _),
-                         lockPtr@(LocalReference (PointerType (PointerType (IntegerType 8) _) _) _)) = md
+    verifyMetadata _ md@((LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
+                         (LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
+                         (LocalReference (PointerType (IntegerType 64) _) _),
+                         (LocalReference (PointerType (PointerType (IntegerType 8) _) _) _)) = md
 
     verifyMetadata inst md@_ = error $ "Incorrect types in metadata: " ++ show md ++ " while processing instruction " ++ show inst
 
