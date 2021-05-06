@@ -325,12 +325,13 @@ instrument m = do
 
         emitNamedInst i
 
-        -- If we just loaded a pointer, fetch the metadata for that pointer.
-        let loadedValueIsPointer = isPointerType ty
-        when loadedValueIsPointer $ do
-          let loadedPtr = LocalReference ty v
-          loadedPtrMetadata <- liftM (verifyMetadata i) $ getMetadataForPointee addr
-          modify $ \s -> s { metadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ metadataTable s }
+        when (not $ isFunctionType ty) $ do
+          -- If we just loaded a pointer, fetch the metadata for that pointer.
+          let loadedValueIsPointer = isPointerType ty
+          when loadedValueIsPointer $ do
+            let loadedPtr = LocalReference ty v
+            loadedPtrMetadata <- liftM (verifyMetadata i) $ getMetadataForPointee addr
+            modify $ \s -> s { metadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ metadataTable s }
 
       -- Instrument a call instruction unless it is calling inline assembly.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
