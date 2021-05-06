@@ -185,6 +185,7 @@ instrument m = do
       let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
       let firstBlockLabel = bbName $ head $ basicBlocks f
       (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
+        modify $ \s -> s { metadataTable = Data.Map.empty }
         instrumentPointerArgs firstBlockLabel $ fst $ parameters f
         instrumentBlocks $ basicBlocks f
         return ()
@@ -198,7 +199,6 @@ instrument m = do
 
     -- Setup the instrumentation of any pointer arguments to the function, and
     -- then branch unconditionally to the first block in the function body.
-
     instrumentPointerArgs fblabel pms = do
       let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isPointerArg pms
       let shadowStackIndices :: [Integer] = [1..]
