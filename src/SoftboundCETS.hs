@@ -399,7 +399,7 @@ instrument m = do
 
         let storedValueIsPointer = isPointerType ty
         let storedValueIsHandled = isLocalReference src
-        when storedValueIsPointer && storedValueIsHandled $ do
+        when (storedValueIsPointer && storedValueIsHandled) $ do
           haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
           when haveSourceMetadata $ do
             (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- gets ((! src) . metadataTable)
