@@ -142,7 +142,8 @@ instrument m = do
       in (warnings, result)
 
     functionsToInstrument :: [Definition] -> Data.Set.Set Name
-    functionsToInstrument defs = Data.Set.filter (not . isInfixOfName "isoc99") $
+    functionsToInstrument defs = Data.Set.filter (not . isInfixOfName "__softboundcets") $
+                                 Data.Set.filter (not . isInfixOfName "isoc99") $
                                  Data.Set.filter (not . isInfixOfName "llvm.") $
                                  Data.Set.difference (Data.Set.fromList $ map getFuncName
                                                                         $ filter isFuncDef
@@ -346,19 +347,23 @@ instrument m = do
             loadedPtrMetadata <- liftM (verifyMetadata i) $ getMetadataForPointee addr
             modify $ \s -> s { metadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ metadataTable s }
 
-      -- Instrument a call instruction unless it is calling inline assembly.
+      -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
-        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-        zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
-        if Data.Set.member fname wrappedFunctions then
-          emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
-        else emitNamedInst i
-        -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
-        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
-        -- Read the pointer metadata for the return value if it is a pointer
-        when (isPointerType rt) $ emitMetadataLoadFromShadowStack (rt, v) 0
-        emitShadowStackDeallocation
+        case fname of
+          (Name {}) -> do -- Calling a function symbol
+            let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
+            emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+            zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+            if Data.Set.member fname wrappedFunctions then
+              emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
+            else emitNamedInst i
+            -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
+            modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
+            -- Read the pointer metadata for the return value if it is a pointer
+            when (isPointerType rt) $ emitMetadataLoadFromShadowStack (rt, v) 0
+            emitShadowStackDeallocation
+          (UnName {}) -> do -- Calling a computed function pointer
+            emitNamedInst i
 
       | (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
         when (not $ isFunctionType ty) $ do
@@ -389,15 +394,19 @@ instrument m = do
       -- This alternative is the non-capturing variant (call ignoring return value, if any).
       -- We don't need to emit checks for the return value here because it is unused.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
-        emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-        zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
-        if Data.Set.member fname wrappedFunctions then
-          emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
-        else emitNamedInst i
-        -- the function could deallocate any of the passed pointers so behave as if it has deallocated all of them
-        modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
-        emitShadowStackDeallocation
+        case fname of
+          (Name {}) -> do -- Calling a function symbol
+            let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
+            emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
+            zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+            if Data.Set.member fname wrappedFunctions then
+              emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
+            else emitNamedInst i
+            -- the function could deallocate any of the passed pointers so behave as if it has deallocated all of them
+            modify $ \s -> s { metadataTable = foldr ($) (metadataTable s) $ map Data.Map.delete ptrArgs }
+            emitShadowStackDeallocation
+          (UnName {}) -> do -- Calling a computed function pointer
+            emitNamedInst i
 
       | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
         when (not $ isFunctionType ty) $ do

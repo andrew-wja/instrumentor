@@ -6,7 +6,7 @@ tools:
 	$(MAKE) -C ../../ dist/instrumentor build-debug-runtimes
 
 clean:
-	rm -f test.ll test instrumented.{ll,s,dump} instrumented dummy-instrumented
+	rm -f test.ll test instrumented.{ll,s,dump,opt.s} instrumented dummy-instrumented
 
 
 # Simple uninstrumented version of the test program
@@ -36,6 +36,9 @@ instrumented.ll: test.ll
 
 instrumented.s: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.s
+
+instrumented.opt.s: instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 instrumented.ll -S -o instrumented.opt.s
 
 instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump
