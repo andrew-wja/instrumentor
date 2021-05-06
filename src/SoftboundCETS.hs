@@ -185,9 +185,14 @@ instrument m = do
       let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
       let firstBlockLabel = bbName $ head $ basicBlocks f
       (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
-        modify $ \s -> s { metadataTable = Data.Map.empty }
+        metadataTable' <- gets metadataTable
+        modify $ \s -> s { globalLockPtr = Nothing
+                         , localStackFrameKeyPtr = Nothing
+                         , localStackFrameLockPtr = Nothing
+                         }
         instrumentPointerArgs firstBlockLabel $ fst $ parameters f
         instrumentBlocks $ basicBlocks f
+        modify $ \s -> s { metadataTable = metadataTable' }
         return ()
       let def = GlobalDefinition $ f { name = name'
                                      , basicBlocks = blocks
