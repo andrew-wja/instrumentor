@@ -203,17 +203,20 @@ instrument m = do
 
     instrumentFunction _ _ = undefined
 
-    -- Setup the instrumentation of any pointer arguments to the function, and
+    -- Setup the instrumentation of any non-function pointer arguments, and
     -- then branch unconditionally to the first block in the function body.
     instrumentPointerArgs fblabel pms = do
-      let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isPointerArg pms
+      let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isNonFunctionPointerArg pms
       let shadowStackIndices :: [Integer] = [1..]
       emitBlockStart (mkName "sbcets_parameter_metadata_init")
       zipWithM_ emitMetadataLoadFromShadowStack pointerArgs shadowStackIndices
       emitTerm $ Br fblabel []
       where
-        isPointerArg (Parameter (PointerType _ _) _ _) = True
-        isPointerArg _ = False
+        isNonFunctionPointerArg (Parameter (PointerType ty _) _ _) =
+          case ty of
+            (FunctionType {}) -> False
+            _ -> True
+        isNonFunctionPointerArg _ = False
 
     instrumentBlocks [] = return ()
 
@@ -344,7 +347,7 @@ instrument m = do
 
       -- Instrument a call instruction unless it is calling inline assembly.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
         emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
         zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
         if Data.Set.member fname wrappedFunctions then
@@ -385,7 +388,7 @@ instrument m = do
       -- This alternative is the non-capturing variant (call ignoring return value, if any).
       -- We don't need to emit checks for the return value here because it is unused.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
-        let ptrArgs = map fst $ filter (isPointerOperand . fst) opds
+        let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
         emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
         zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
         if Data.Set.member fname wrappedFunctions then
@@ -458,6 +461,8 @@ instrument m = do
     isFunctionType (FunctionType {}) = True
     isFunctionType _ = False
 
+    isNonFunctionPointerOperand o = (isPointerOperand o) && (not $ isFunctionType $ pointerReferent $ typeOf o)
+
     rewriteCalledFunctionName n (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) =
       Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
 
@@ -499,7 +504,6 @@ instrument m = do
       (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
                 [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
