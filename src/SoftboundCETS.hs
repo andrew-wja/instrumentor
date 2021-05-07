@@ -1,5 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 module SoftboundCETS (instrument) where
 
 import Prelude hiding ((!!))
@@ -273,7 +274,7 @@ instrument opts m = do
       modify $ \s -> s { metadataTable = saved }
 
     instrumentTerm i@(Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) = do
-      emitMetadataStoreToShadowStack op 0
+      emitMetadataStoreToShadowStack Nothing op 0
       emitLocalKeyAndLockDestruction
       emitNamedTerm i
 
@@ -368,7 +369,7 @@ instrument opts m = do
             (Name {}) -> do -- Calling a function symbol
               let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-              zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+              zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
               if Data.Set.member fname wrappedFunctions then
                 emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
               else emitNamedInst i
@@ -422,7 +423,7 @@ instrument opts m = do
             (Name {}) -> do -- Calling a function symbol
               let ptrArgs = map fst $ filter (isNonFunctionPointerOperand . fst) opds
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
-              zipWithM_ emitMetadataStoreToShadowStack ptrArgs [1..]
+              zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
               if Data.Set.member fname wrappedFunctions then
                 emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
               else emitNamedInst i
@@ -531,15 +532,19 @@ instrument opts m = do
       modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
-    emitMetadataStoreToShadowStack op@(LocalReference (PointerType {}) _) ix = do
+    emitMetadataStoreToShadowStack :: Maybe Name -> Operand -> Integer -> _
+    emitMetadataStoreToShadowStack callee op@(LocalReference (PointerType {}) _) ix = do
       haveMetadata <- gets ((Data.Map.member op) . metadataTable)
       (basePtr, boundPtr, keyPtr, lockPtr) <- if haveMetadata
                                               then gets ((! op) . metadataTable)
                                               else do
                                                 fn <- gets (name . fromJust . current)
-                                                tell ["no metadata for pointer " ++ (unpack $ ppll op) ++
-                                                      " passed to function " ++ (unpack $ ppll fn) ++
-                                                      ", storing don't-care metadata to the shadow stack: " ]
+                                                tell ["in function " ++ (unpack $ ppll fn) ++
+                                                      "no metadata for pointer " ++ (unpack $ ppll op) ++
+                                                      (if isJust callee
+                                                       then " passed to callee " ++ (unpack $ ppll $ fromJust callee)
+                                                       else " being returned") ++
+                                                      " (storing don't-care metadata to callee shadow stack)" ]
                                                 nullPtr <- inttoptr (int64 0) (ptr i8)
                                                 basePtr <- alloca (ptr i8) Nothing 8
                                                 boundPtr <- alloca (ptr i8) Nothing 8
@@ -572,9 +577,9 @@ instrument opts m = do
                 [(lock, []), (ix', [])]
       return ()
 
-    emitMetadataStoreToShadowStack (LocalReference {}) _ = undefined
-    emitMetadataStoreToShadowStack (ConstantOperand {}) _ = undefined
-    emitMetadataStoreToShadowStack (MetadataOperand {}) _ = undefined
+    emitMetadataStoreToShadowStack _ (LocalReference {}) _ = undefined
+    emitMetadataStoreToShadowStack _ (ConstantOperand {}) _ = undefined
+    emitMetadataStoreToShadowStack _ (MetadataOperand {}) _ = undefined
 
     emitShadowStackAllocation numArgs = do
       numArgs' <- pure $ int32 numArgs
