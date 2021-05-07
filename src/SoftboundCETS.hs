@@ -217,6 +217,7 @@ instrument opts m = do
                          , current = Nothing
                          }
         return ()
+
       let def = GlobalDefinition $ f { name = name'
                                      , basicBlocks = blocks
                                      }
@@ -310,9 +311,13 @@ instrument opts m = do
       (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                 [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-      (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      omitCheck <- gets (CLI.omitChecks . options)
+      when (not omitCheck) $ do
+        (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        return ()
+
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ (unpack $ ppll x)
@@ -449,9 +454,13 @@ instrument opts m = do
             when haveTargetMetadata $ do
               (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
               -- Check the metadata is valid
-              (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                        [(tgtBasePtr, []), (tgtBoundPtr, []), (tgtKeyPtr, []), (tgtLockPtr, [])]
+              omitCheck <- gets (CLI.omitChecks . options)
+              when (not omitCheck) $ do
+                (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+                _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                          [(tgtBasePtr, []), (tgtBoundPtr, []), (tgtKeyPtr, []), (tgtLockPtr, [])]
+                return ()
+
               -- Check the store is spatially in bounds
               (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
               tgtBase <- load tgtBasePtr 0
@@ -478,9 +487,13 @@ instrument opts m = do
               when haveSourceMetadata $ do
                 (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- liftM (verifyMetadata i) $ gets ((! src) . metadataTable)
                 -- Check the metadata is valid
-                (fname'', fproto'') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-                _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                          [(srcBasePtr, []), (srcBoundPtr, []), (srcKeyPtr, []), (srcLockPtr, [])]
+                omitCheck <- gets (CLI.omitChecks . options)
+                when (not omitCheck) $ do
+                  (fname'', fproto'') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+                  _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
+                            [(srcBasePtr, []), (srcBoundPtr, []), (srcKeyPtr, []), (srcLockPtr, [])]
+                  return ()
+
                 tgtAddr <- bitcast tgt (ptr i8)
                 srcBase <- load srcBasePtr 0
                 srcBound <- load srcBoundPtr 0
@@ -565,9 +578,13 @@ instrument opts m = do
                                                           [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
                                                 return (basePtr, boundPtr, keyPtr, lockPtr)
       -- Check the metadata is valid
-      (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      omitCheck <- gets (CLI.omitChecks . options)
+      when (not omitCheck) $ do
+        (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        return ()
+
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0

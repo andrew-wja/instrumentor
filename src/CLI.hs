@@ -7,11 +7,12 @@ data Options = Options { ignoreLoad :: Bool
                        , ignoreGetElementPtr :: Bool
                        , ignoreBitcast :: Bool
                        , ignoreCall :: Bool
+                       , omitChecks :: Bool
                        , file :: String
                        }
 
 defaultOptions :: Options
-defaultOptions = Options False False False False False ""
+defaultOptions = Options False False False False False False ""
 
 optParser :: Parser Options
 optParser = Options
@@ -30,6 +31,9 @@ optParser = Options
   <*> switch
       ( long "call"
       <> help "Ignore call instructions" )
+  <*> switch
+      ( long "checks"
+      <> help "Disable checks for dynamically loaded metadata" )
   <*> argument str
       ( metavar "FILE"
       <> help "LLVM module to instrument" )

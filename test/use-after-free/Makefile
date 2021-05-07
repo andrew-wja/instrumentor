@@ -32,7 +32,7 @@ debug-test: test
 # Instrumented version of the test program
 instrumented.ll: test.ll
 	cp test.ll instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor --checks instrumented.ll
 
 instrumented.s: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.s
