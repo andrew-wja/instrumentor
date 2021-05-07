@@ -9,7 +9,7 @@ import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, intercalate)
 import LLVM.AST
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -20,6 +20,8 @@ import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
+import LLVM.Pretty (ppll)
+import Data.Text.Lazy (unpack)
 import Utils
 import qualified CLI
 
@@ -37,13 +39,16 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 
                                -- The command line options are stored for inspection
                                , options :: CLI.Options
+
+                               -- The current function we are processing (needed for decent error reporting)
+                               , current :: Maybe Global
                                }
 
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty Data.Set.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
-                               CLI.defaultOptions
+                               CLI.defaultOptions Nothing
 
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
@@ -194,14 +199,17 @@ instrument opts m = do
       let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
       let firstBlockLabel = bbName $ head $ basicBlocks f
       (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
-        metadataTable' <- gets metadataTable
         modify $ \s -> s { globalLockPtr = Nothing
                          , localStackFrameKeyPtr = Nothing
                          , localStackFrameLockPtr = Nothing
+                         , current = Just f
                          }
+        metadataTable' <- gets metadataTable
         instrumentPointerArgs firstBlockLabel $ fst $ parameters f
         instrumentBlocks $ basicBlocks f
-        modify $ \s -> s { metadataTable = metadataTable' }
+        modify $ \s -> s { metadataTable = metadataTable'
+                         , current = Nothing
+                         }
         return ()
       let def = GlobalDefinition $ f { name = name'
                                      , basicBlocks = blocks
@@ -301,30 +309,25 @@ instrument opts m = do
                 [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return (basePtr, boundPtr, keyPtr, lockPtr)
 
-    getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ show x
-
-    getDCMetadata = do
-      nullPtr <- inttoptr (int64 0) (ptr i8)
-      basePtr <- alloca (ptr i8) Nothing 8
-      boundPtr <- alloca (ptr i8) Nothing 8
-      keyPtr <- alloca (i64) Nothing 8
-      lockPtr <- alloca (ptr i8) Nothing 8
-      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-      return (basePtr, boundPtr, keyPtr, lockPtr)
+    getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ (unpack $ ppll x)
 
     verifyMetadata _ md@((LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
                          (LocalReference (PointerType (PointerType (IntegerType 8) _) _) _),
                          (LocalReference (PointerType (IntegerType 64) _) _),
                          (LocalReference (PointerType (PointerType (IntegerType 8) _) _) _)) = md
 
-    verifyMetadata inst md@_ = error $ "Incorrect types in metadata: " ++ show md ++ " while processing instruction " ++ show inst
+    verifyMetadata inst (basePtr, boundPtr, keyPtr, lockPtr) = error $
+      "Incorrect types in metadata: " ++ "(" ++
+        intercalate ", " [ unpack $ ppll basePtr
+                         , unpack $ ppll boundPtr
+                         , unpack $ ppll keyPtr
+                         , unpack $ ppll lockPtr ] ++
+        ")" ++ " while processing instruction " ++ (unpack $ ppll inst)
 
     instrumentInst i@(v := o)
       | (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
-        go <- gets (not . CLI.ignoreLoad . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreLoad . options)
+        if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty) $ do
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
@@ -358,8 +361,8 @@ instrument opts m = do
 
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
-        go <- gets (not . CLI.ignoreCall . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreCall . options)
+        if disable then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -378,8 +381,8 @@ instrument opts m = do
               emitNamedInst i
 
       | (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
-        go <- gets (not . CLI.ignoreGetElementPtr . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreGetElementPtr . options)
+        if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty) $ do
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
@@ -394,8 +397,8 @@ instrument opts m = do
           emitNamedInst i
 
       | (BitCast addr@(LocalReference (PointerType ty' _) _) ty _) <- o = do
-        go <- gets (not . CLI.ignoreBitcast . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreBitcast . options)
+        if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty') $ do
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
@@ -412,8 +415,8 @@ instrument opts m = do
       -- This alternative is the non-capturing variant (call ignoring return value, if any).
       -- We don't need to emit checks for the return value here because it is unused.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
-        go <- gets (not . CLI.ignoreCall . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreCall . options)
+        if disable then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -430,8 +433,8 @@ instrument opts m = do
               emitNamedInst i
 
       | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
-        go <- gets (not . CLI.ignoreStore . options)
-        if not go then emitNamedInst i
+        disable <- gets (CLI.ignoreStore . options)
+        if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty) $ do
             haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
@@ -532,8 +535,20 @@ instrument opts m = do
       haveMetadata <- gets ((Data.Map.member op) . metadataTable)
       (basePtr, boundPtr, keyPtr, lockPtr) <- if haveMetadata
                                               then gets ((! op) . metadataTable)
-                                              else do tell ["Pointer passed to function has no metadata: " ++ show op]
-                                                      getDCMetadata
+                                              else do
+                                                fn <- gets (name . fromJust . current)
+                                                tell ["no metadata for pointer " ++ (unpack $ ppll op) ++
+                                                      " passed to function " ++ (unpack $ ppll fn) ++
+                                                      ", storing don't-care metadata to the shadow stack: " ]
+                                                nullPtr <- inttoptr (int64 0) (ptr i8)
+                                                basePtr <- alloca (ptr i8) Nothing 8
+                                                boundPtr <- alloca (ptr i8) Nothing 8
+                                                keyPtr <- alloca (i64) Nothing 8
+                                                lockPtr <- alloca (ptr i8) Nothing 8
+                                                (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+                                                _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                                                          [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+                                                return (basePtr, boundPtr, keyPtr, lockPtr)
       -- Check the metadata is valid
       (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')

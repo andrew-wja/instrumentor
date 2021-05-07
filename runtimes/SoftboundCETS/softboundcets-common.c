@@ -263,9 +263,9 @@ __softboundcets_metadata_load(void* addr_of_ptr,
 
   if(addr_of_ptr == NULL) {
     *((void**) base) = NULL;
-    *((void**) bound) = (void*)PTRDIFF_MAX;
+    *((void**) bound) = (void*) PTRDIFF_MAX;
     *((size_t*) key) = 1;
-    *((void**) lock) = __softboundcets_global_lock;
+    *((void**) lock) = (void*) __softboundcets_global_lock;
 #if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
                             addr_of_ptr, *((void**) base), *((void**) bound),
