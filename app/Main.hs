@@ -1,34 +1,28 @@
 module Main where
 
+import qualified CLI
 import qualified Utils
 import qualified SoftboundCETS
 
 import Main.Utf8 (withUtf8, withStdTerminalHandles)
-import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import Data.List (isSuffixOf)
+import Options.Applicative (execParser)
 
 main :: IO ()
 main = withStdTerminalHandles $ withUtf8 $ do
-  args <- getArgs
+  opts <- execParser CLI.options
 
-  if (length args) == 1 then do
-    let inputFile = head args
-    if isSuffixOf ".bc" inputFile then do
-      parsed <- Utils.readBC inputFile
-      instrumented <- SoftboundCETS.instrument parsed
-      -- ~ Utils.verifyAST instrumented
-      Utils.writeBC inputFile instrumented
-      exitSuccess
-    else if isSuffixOf ".ll" inputFile then do
-      parsed <- Utils.readIR inputFile
-      instrumented <- SoftboundCETS.instrument parsed
-      -- ~ Utils.verifyAST instrumented
-      Utils.writeIR inputFile instrumented
-      exitSuccess
-    else do
-      putStrLn ("Invalid input file: " ++ inputFile)
-      exitFailure
+  if isSuffixOf ".bc" $ CLI.file opts then do
+    parsed <- Utils.readBC $ CLI.file opts
+    instrumented <- SoftboundCETS.instrument opts parsed
+    Utils.writeBC (CLI.file opts) instrumented
+    exitSuccess
+  else if isSuffixOf ".ll" $ CLI.file opts then do
+    parsed <- Utils.readIR $ CLI.file opts
+    instrumented <- SoftboundCETS.instrument opts parsed
+    Utils.writeIR (CLI.file opts) instrumented
+    exitSuccess
   else do
-    putStrLn "usage: instrumentor <file>.bc"
+    putStrLn ("Invalid input file: " ++ CLI.file opts)
     exitFailure
