@@ -546,10 +546,14 @@ instrument opts m = do
                                               then gets ((! op) . metadataTable)
                                               else do
                                                 fn <- gets (name . fromJust . current)
+                                                rc <- gets renamingCandidates
                                                 tell ["in function " ++ (unpack $ ppll fn) ++
                                                       ": no metadata for pointer " ++ (unpack $ ppll op) ++
                                                       (if isJust callee
-                                                       then " passed to callee " ++ (unpack $ ppll $ fromJust callee)
+                                                       then " passed to callee " ++
+                                                         (if Data.Set.member (fromJust callee) rc
+                                                          then "(wrapped) " ++ (unpack $ ppll $ fromJust callee)
+                                                          else (unpack $ ppll $ fromJust callee))
                                                        else " being returned") ++
                                                       " (storing don't-care metadata to callee shadow stack)" ]
                                                 nullPtr <- inttoptr (int64 0) (ptr i8)
