@@ -158,7 +158,7 @@ __WEAK__ void
 __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key);
 
 __WEAK__ void
-__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t ptr_key);
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key);
 
 __WEAK__ void
 __softboundcets_dummy();

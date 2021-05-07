@@ -204,13 +204,21 @@ __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 }
 
 __WEAK__ void
-__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t ptr_key) {
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
 
-  if (ptr_lock != NULL) {
+  if (ptr_lock != NULL && ptr != NULL) {
 #if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                            ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
+    size_t temp = *((size_t*)pointer_lock);
+
+    if(temp != key) {
+      __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
+                             key, temp, __softboundcets_lock_next_location);
+      __softboundcets_abort();
+    }
+
     *((size_t*)ptr_lock) = 0;
     *((void**) ptr_lock) = __softboundcets_lock_next_location;
     __softboundcets_lock_next_location = ptr_lock;
