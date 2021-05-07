@@ -364,6 +364,7 @@ instrument opts m = do
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
         disable <- gets (CLI.ignoreCall . options)
         if disable then emitNamedInst i
+        else if Data.Set.member fname ignoredFunctions then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -418,6 +419,7 @@ instrument opts m = do
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
         disable <- gets (CLI.ignoreCall . options)
         if disable then emitNamedInst i
+        else if Data.Set.member fname ignoredFunctions then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -540,7 +542,7 @@ instrument opts m = do
                                               else do
                                                 fn <- gets (name . fromJust . current)
                                                 tell ["in function " ++ (unpack $ ppll fn) ++
-                                                      "no metadata for pointer " ++ (unpack $ ppll op) ++
+                                                      ": no metadata for pointer " ++ (unpack $ ppll op) ++
                                                       (if isJust callee
                                                        then " passed to callee " ++ (unpack $ ppll $ fromJust callee)
                                                        else " being returned") ++
