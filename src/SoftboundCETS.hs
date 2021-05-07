@@ -129,6 +129,17 @@ wrappedFunctionNames :: Map Name Name
   in (Data.Set.fromList $ map mkName names,
       Data.Map.fromList $ map (\n -> (mkName n, mkName ("softboundcets_" ++ n))) names)
 
+ignore :: Name -> Bool
+ignore func
+ | isInfixOfName "__softboundcets" func = True
+ | isInfixOfName "isoc99" func = True
+ | isInfixOfName "llvm." func = True
+ | Data.Set.member func ignoredFunctions = True
+ | otherwise = False
+  where
+    isInfixOfName :: String -> Name -> Bool
+    isInfixOfName s (Name s') = isInfixOf s $ show s'
+    isInfixOfName _ _ = False
 
 instrument :: CLI.Options -> Module -> IO Module
 instrument opts m = do
@@ -154,18 +165,12 @@ instrument opts m = do
       in (warnings, result)
 
     functionsToInstrument :: [Definition] -> Data.Set.Set Name
-    functionsToInstrument defs = Data.Set.filter (not . isInfixOfName "__softboundcets") $
-                                 Data.Set.filter (not . isInfixOfName "isoc99") $
-                                 Data.Set.filter (not . isInfixOfName "llvm.") $
+    functionsToInstrument defs = Data.Set.filter (not . ignore) $
                                  Data.Set.difference (Data.Set.fromList $ map getFuncName
                                                                         $ filter isFuncDef
                                                                         $ defs)
                                                      (Data.Set.union ignoredFunctions
                                                                      wrappedFunctions)
-
-    isInfixOfName :: String -> Name -> Bool
-    isInfixOfName s (Name s') = isInfixOf s $ show s'
-    isInfixOfName _ _ = False
 
     isFuncDef (GlobalDefinition (Function {})) = True
     isFuncDef _ = False
@@ -364,7 +369,7 @@ instrument opts m = do
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
         disable <- gets (CLI.ignoreCall . options)
         if disable then emitNamedInst i
-        else if Data.Set.member fname ignoredFunctions then emitNamedInst i
+        else if ignore fname then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -419,7 +424,7 @@ instrument opts m = do
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
         disable <- gets (CLI.ignoreCall . options)
         if disable then emitNamedInst i
-        else if Data.Set.member fname ignoredFunctions then emitNamedInst i
+        else if ignore fname then emitNamedInst i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
