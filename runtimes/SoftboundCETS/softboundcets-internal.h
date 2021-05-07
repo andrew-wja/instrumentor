@@ -83,7 +83,10 @@ static const int __SOFTBOUNDCETS_PREALLOCATE_TRIE = 1;
 static const int __SOFTBOUNDCETS_PREALLOCATE_TRIE = 0;
 #endif
 
+#define SOFTBOUNDCETS_BACKTRACE_DEPTH 64
+
 extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort();
+extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort_reason(const char*);
 extern void __softboundcets_printf(const char* str, ...);
 extern __NO_INLINE void __softboundcets_stub(void);
 extern void __softboundcets_init(void);

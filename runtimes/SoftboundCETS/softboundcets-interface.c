@@ -54,7 +54,12 @@ __softboundcets_spatial_load_dereference_check(void *base,
     if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
       __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
                              base, bound, ptr);
-      __softboundcets_abort();
+      if (ptr < base) {
+        __softboundcets_abort_reason("read through pointer out of bounds below object base address");
+      }
+      if ((void*)((char*)ptr + size_of_type) > bound) {
+        __softboundcets_abort_reason("read through pointer out of bounds above object bound address");
+      }
     }
   }
 
@@ -74,7 +79,12 @@ __softboundcets_spatial_store_dereference_check(void *base,
     if ((ptr < base) || ((void*)((char*)ptr + size_of_type) > bound)) {
       __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
                              base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
-      __softboundcets_abort();
+      if (ptr < base) {
+        __softboundcets_abort_reason("write through pointer out of bounds below object base address");
+      }
+      if ((void*)((char*)ptr + size_of_type) > bound) {
+        __softboundcets_abort_reason("write through pointer out of bounds above object bound address");
+      }
     }
   }
 #if defined(SOFTBOUNDCETS_DEBUG)
@@ -93,7 +103,7 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
     if(temp != key) {
       __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
                              key, temp, __softboundcets_lock_next_location);
-      __softboundcets_abort();
+      __softboundcets_abort_reason("read through pointer after free or return from function");
     }
   }
 #if defined(SOFTBOUNDCETS_DEBUG)
@@ -112,7 +122,7 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
     if(temp != key) {
       __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key=%zx, *lock=%zx\n",
                              key, temp);
-      __softboundcets_abort();
+      __softboundcets_abort_reason("write through pointer after free or return from function");
     }
   }
 #if defined(SOFTBOUNDCETS_DEBUG)

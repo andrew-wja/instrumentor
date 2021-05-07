@@ -65,9 +65,25 @@ __softboundcets_abort() {
   fprintf(stderr, "\nSoftboundcets: Memory safety violation detected\n\nBacktrace:\n");
   // Based on code from the backtrace man page
   size_t size;
-  void *array[100];
+  void *array[SOFTBOUNDCETS_BACKTRACE_DEPTH];
 #if !defined (__FreeBSD__)
-  size = backtrace(array, 100);
+  size = backtrace(array, SOFTBOUNDCETS_BACKTRACE_DEPTH);
+  backtrace_symbols_fd(array, size, fileno(stderr));
+#endif
+  fprintf(stderr, "\n\n");
+  abort();
+}
+
+__SOFTBOUNDCETS_NORETURN void
+__softboundcets_abort_reason(const char *reason) {
+  fprintf(stderr, "\nSoftboundcets: Memory safety violation detected (");
+  fprintf(stderr, "%s)\n\n", reason);
+  fprintf(stderr, "Backtrace:\n");
+  // Based on code from the backtrace man page
+  size_t size;
+  void *array[SOFTBOUNDCETS_BACKTRACE_DEPTH];
+#if !defined (__FreeBSD__)
+  size = backtrace(array, SOFTBOUNDCETS_BACKTRACE_DEPTH);
   backtrace_symbols_fd(array, size, fileno(stderr));
 #endif
   fprintf(stderr, "\n\n");
@@ -211,12 +227,12 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
     __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                            ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
-    size_t temp = *((size_t*)pointer_lock);
+    size_t temp = *((size_t*)ptr_lock);
 
     if(temp != key) {
       __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
                              key, temp, __softboundcets_lock_next_location);
-      __softboundcets_abort();
+      __softboundcets_abort_reason("double free");
     }
 
     *((size_t*)ptr_lock) = 0;
