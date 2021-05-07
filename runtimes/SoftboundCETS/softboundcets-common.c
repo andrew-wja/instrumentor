@@ -246,9 +246,10 @@ __softboundcets_metadata_check(void** base,
     __softboundcets_abort();
 
     if ((*lock) == NULL) {
-      __softboundcets_printf("[metadata_check] corrupt metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p, lock=%p\n",
+#if defined(SOFTBOUNDCETS_DEBUG)
+      __softboundcets_printf("[metadata_check] invalid metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p, lock=%p\n",
                              base, bound, key, lock, (*lock));
-      __softboundcets_abort();
+#endif
     }
   }
   return;
@@ -264,8 +265,8 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   if(addr_of_ptr == NULL) {
     *((void**) base) = NULL;
     *((void**) bound) = (void*) PTRDIFF_MAX;
-    *((size_t*) key) = 1;
-    *((void**) lock) = (void*) __softboundcets_global_lock;
+    *((size_t*) key) = 0;
+    *((void**) lock) = NULL;
 #if defined(SOFTBOUNDCETS_DEBUG)
     __softboundcets_printf("[metadata_load] ptr_addr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
                             addr_of_ptr, *((void**) base), *((void**) bound),

@@ -235,6 +235,10 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
       __softboundcets_abort_reason("double free");
     }
 
+    if (ptr_lock == (void*)__softboundcets_global_lock) {
+      __softboundcets_abort_reason("deallocating global variable");
+    }
+
     *((size_t*)ptr_lock) = 0;
     *((void**) ptr_lock) = __softboundcets_lock_next_location;
     __softboundcets_lock_next_location = ptr_lock;
