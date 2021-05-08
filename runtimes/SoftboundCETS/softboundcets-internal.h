@@ -113,8 +113,8 @@ typedef struct {
 
 extern __softboundcets_trie_entry_t** __softboundcets_trie_primary_table;
 extern size_t* __softboundcets_shadow_stack_ptr;
-extern size_t* __softboundcets_temporal_space_begin;
-extern size_t* __softboundcets_stack_temporal_space_begin;
+extern size_t* __softboundcets_heap_key_table_ptr;
+extern size_t* __softboundcets_stack_key_table_ptr;
 extern size_t* __softboundcets_global_lock;
 extern size_t* __softboundcets_lock_next_location;
 extern size_t* __softboundcets_lock_new_location;

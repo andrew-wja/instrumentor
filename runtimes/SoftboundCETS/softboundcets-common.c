@@ -207,10 +207,20 @@ __softboundcets_load_lock_shadow_stack(int arg_no) {
 
 __WEAK__ void
 __softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
+  assert(ptr_lock && "[create_stack_key] passed a null pointer to parent lock location");
+  assert(ptr_key && "[create_stack_key] passed a null pointer to key location");
+
+  if (__softboundcets_stack_key_table_ptr == NULL) {
+    __softboundcets_printf("[create_stack_key] stack key table pointer is null\n");
+    __softboundcets_abort();
+  }
+
   size_t temp_id = __softboundcets_key_id_counter++;
-  *((size_t**) ptr_lock) = (size_t*)__softboundcets_stack_temporal_space_begin++;
-  *((size_t*)ptr_key) = temp_id;
-  **((size_t**)ptr_lock) = temp_id;
+  size_t *lock_location = (size_t*)__softboundcets_stack_key_table_ptr++;
+
+  *(lock_location) = temp_id;
+  *(ptr_key) = temp_id;
+  *((size_t**) ptr_lock) = lock_location;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[create_stack_key] key=%zx, lock=%p\n",
@@ -220,13 +230,25 @@ __softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
 }
 
 __WEAK__ void
-__softboundcets_destroy_stack_key(size_t ptr_key){
-  __softboundcets_stack_temporal_space_begin--;
-  *(__softboundcets_stack_temporal_space_begin) = 0;
+__softboundcets_destroy_stack_key(size_t key){
+  __softboundcets_stack_key_table_ptr--;
+
+  if (__softboundcets_stack_key_table_ptr == NULL) {
+    __softboundcets_printf("[destroy_stack_key] stack key table pointer is null\n");
+    __softboundcets_abort();
+  }
+
+  size_t *lock = (size_t *) __softboundcets_stack_key_table_ptr;
+
+  if (*lock != key) {
+    __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx, control flow anomaly\n", key, *lock);
+    __softboundcets_abort();
+  }
+
+  *(lock) = 0;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
-  __softboundcets_printf("[destroy_stack_key] key=%zx\n",
-                          ptr_key);
+  __softboundcets_printf("[destroy_stack_key] key=%zx\n", key);
 #endif
   return;
 }

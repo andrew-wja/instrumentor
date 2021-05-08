@@ -74,13 +74,13 @@ __softboundcets_init(void) {
                                            SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
 
   assert(__softboundcets_lock_new_location != (void*) -1);
-  __softboundcets_temporal_space_begin = (size_t *)__softboundcets_lock_new_location;
+  __softboundcets_heap_key_table_ptr = (size_t *)__softboundcets_lock_new_location;
 
   size_t stack_temporal_table_length = (__SOFTBOUNDCETS_N_STACK_TEMPORAL_ENTRIES) * sizeof(void*);
-  __softboundcets_stack_temporal_space_begin = mmap(0, stack_temporal_table_length,
+  __softboundcets_stack_key_table_ptr = mmap(0, stack_temporal_table_length,
                                                     PROT_READ| PROT_WRITE,
                                                     SOFTBOUNDCETS_MMAP_FLAGS, -1, 0);
-  assert(__softboundcets_stack_temporal_space_begin != (void*) -1);
+  assert(__softboundcets_stack_key_table_ptr != (void*) -1);
 
   size_t global_lock_size = (__SOFTBOUNDCETS_N_GLOBAL_LOCK_SIZE) * sizeof(void*);
   __softboundcets_global_lock = mmap(0, global_lock_size,

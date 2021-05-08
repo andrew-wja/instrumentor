@@ -106,8 +106,8 @@ __softboundcets_stub(void) {
 
 __softboundcets_trie_entry_t** __softboundcets_trie_primary_table;
 size_t* __softboundcets_shadow_stack_ptr = NULL;
-size_t* __softboundcets_temporal_space_begin = 0;
-size_t* __softboundcets_stack_temporal_space_begin = NULL;
+size_t* __softboundcets_heap_key_table_ptr = 0;
+size_t* __softboundcets_stack_key_table_ptr = NULL;
 size_t* __softboundcets_global_lock = 0;
 size_t* __softboundcets_lock_next_location = NULL;
 size_t* __softboundcets_lock_new_location = NULL;
@@ -129,7 +129,7 @@ __softboundcets_allocate_lock_location() {
   if(__softboundcets_lock_next_location == NULL) {
 #if defined(SOFTBOUNDCETS_DEBUG)
       __softboundcets_printf("[allocate_lock_location] new_lock_location=%p\n", __softboundcets_lock_new_location);
-      if(__softboundcets_lock_new_location > __softboundcets_temporal_space_begin + __SOFTBOUNDCETS_N_TEMPORAL_ENTRIES) {
+      if(__softboundcets_lock_new_location > __softboundcets_heap_key_table_ptr + __SOFTBOUNDCETS_N_TEMPORAL_ENTRIES) {
         __softboundcets_printf("[allocate_lock_location] out of temporal free entries \n");
         __softboundcets_abort();
       }

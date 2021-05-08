@@ -111,7 +111,7 @@ __softboundcets_create_stack_key(void** ptr_lock,
                                         size_t* ptr_key);
 
 __WEAK__ void
-__softboundcets_destroy_stack_key(size_t ptr_key);
+__softboundcets_destroy_stack_key(size_t key);
 
 /* Metadata routines */
 __WEAK__ void
