@@ -11,7 +11,7 @@ packages:
 ghc-options:
   "$locals": -Wall
   "$targets": -Wall -Wno-partial-type-signatures
-  "$everything": -O0
+  "$everything": -O3
 
 extra-lib-dirs: [ llvm-root/lib ]
 
