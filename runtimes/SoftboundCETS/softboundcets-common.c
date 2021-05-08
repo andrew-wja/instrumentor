@@ -241,8 +241,8 @@ __softboundcets_destroy_stack_key(size_t key){
   size_t *lock = (size_t *) __softboundcets_stack_key_table_ptr;
 
   if (*lock != key) {
-    __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx, control flow anomaly\n", key, *lock);
-    __softboundcets_abort();
+    __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx\n", key, *lock);
+    __softboundcets_abort_reason("control flow anomaly");
   }
 
   *(lock) = 0;
