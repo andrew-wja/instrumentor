@@ -284,7 +284,7 @@ instrument opts m = do
       emitLocalKeyAndLockDestruction
       emitNamedTerm i
 
-    instrumentTerm i@(Do (Ret Nothing _)) = do
+    instrumentTerm i@(Do (Ret _ _)) = do
       emitLocalKeyAndLockDestruction
       emitNamedTerm i
 
