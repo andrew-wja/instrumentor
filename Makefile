@@ -24,6 +24,7 @@ dist/instrumentor: build-instrumentor
 clean:
 	rm -rf dist
 	stack clean
+	for x in `ls test`; do $(MAKE) -C test/$$x clean; done
 
 really-clean: clean
 	rm -rf llvm-build runtimes-build
