@@ -413,7 +413,7 @@ instrument opts m = do
           when (not $ isFunctionType ty) $ do
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
             when haveMetadata $ do
-              ty' <- computeIndexedType (typeOf addr) ixs
+              ty' <- index (typeOf addr) ixs
               -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
               -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
               when (isJust ty') $ do
@@ -642,17 +642,19 @@ instrument opts m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
-    computeIndexedType :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-    computeIndexedType ty [] = pure $ Just ty
-    computeIndexedType (PointerType ty _) (_:is') = computeIndexedType ty is'
-    computeIndexedType (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
-      computeIndexedType (head $ drop (fromIntegral val) elTys) is'
-    computeIndexedType (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
-    computeIndexedType (VectorType _ elTy) (_:is') = computeIndexedType elTy is'
-    computeIndexedType (ArrayType _ elTy) (_:is') = computeIndexedType elTy is'
-    computeIndexedType (NamedTypeReference nm) is' = do
+    -- | Index into a type with a list of consecutive 'Operand' indices.
+    -- May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
+    index :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+    index ty [] = pure $ Just ty
+    index (PointerType ty _) (_:is') = index ty is'
+    index (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+      index (head $ drop (fromIntegral val) elTys) is'
+    index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
+    index (VectorType _ elTy) (_:is') = index elTy is'
+    index (ArrayType _ elTy) (_:is') = index elTy is'
+    index (NamedTypeReference nm) is' = do
       mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
       case mayTy of
         Nothing -> pure Nothing
-        Just ty -> computeIndexedType ty is'
-    computeIndexedType t (_:_) = error $ "Can't index into type: " ++ show t
+        Just ty -> index ty is'
+    index t (_:_) = error $ "Can't index into type: " ++ show t

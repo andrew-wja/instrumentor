@@ -4,5 +4,6 @@
 *.cabal
 llvm-build/
 llvm-root/
+llvm-patches/
 runtimes-build/
 dist/
