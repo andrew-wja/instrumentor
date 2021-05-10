@@ -43,13 +43,16 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 
                                -- The current function we are processing (needed for decent error reporting)
                                , current :: Maybe Global
+
+                               -- The set of known safe pointers
+                               , safe :: Data.Set.Set Name
                                }
 
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty Data.Set.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
-                               CLI.defaultOptions Nothing
+                               CLI.defaultOptions Nothing Data.Set.empty
 
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
@@ -209,12 +212,14 @@ instrument opts m = do
                          , localStackFrameKeyPtr = Nothing
                          , localStackFrameLockPtr = Nothing
                          , current = Just f
+                         , safe = Data.Set.empty
                          }
         metadataTable' <- gets metadataTable
         instrumentPointerArgs firstBlockLabel $ fst $ parameters f
         instrumentBlocks $ basicBlocks f
         modify $ \s -> s { metadataTable = metadataTable'
                          , current = Nothing
+                         , safe = Data.Set.empty
                          }
         return ()
 
@@ -340,13 +345,18 @@ instrument opts m = do
         ")" ++ " while processing instruction " ++ (unpack $ ppll inst)
 
     instrumentInst i@(v := o)
-      | (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
+      | (Alloca {}) <- o = do
+        emitNamedInst i
+        modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+
+      | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
         disable <- gets (CLI.ignoreLoad . options)
         if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty) $ do
+            unsafe <- gets (not . Data.Set.member n . safe)
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
-            when haveMetadata $ do
+            when (unsafe && haveMetadata) $ do
               (basePtr, boundPtr, keyPtr, lockPtr) <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
               base <- load basePtr 0
               bound <- load boundPtr 0
@@ -449,13 +459,14 @@ instrument opts m = do
             (UnName {}) -> do -- Calling a computed function pointer
               emitNamedInst i
 
-      | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
+      | (Store _ tgt@(LocalReference (PointerType ty _) n) src _ _ _) <- o = do
         disable <- gets (CLI.ignoreStore . options)
         if disable then emitNamedInst i
         else do
           when (not $ isFunctionType ty) $ do
             haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
-            when haveTargetMetadata $ do
+            unsafe <- gets (not . Data.Set.member n . safe)
+            when (unsafe && haveTargetMetadata) $ do
               (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
               -- Check the metadata is valid
               omitCheck <- gets (CLI.omitChecks . options)
