@@ -11,7 +11,7 @@ import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, intercalate)
-import LLVM.AST
+import LLVM.AST hiding (index)
 import LLVM.AST.Global
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
