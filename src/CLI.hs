@@ -7,8 +7,7 @@ data Options = Options { instrumentLoad :: Bool
                        , instrumentBitcast :: Bool
                        , instrumentCall :: Bool
                        , emitChecks :: Bool
-                       -- ~ , instrumentHeap :: Bool
-                       -- ~ , instrumentStack :: Bool
+                       , instrumentStack :: Bool
                        -- ~ , instrumentGlobals :: Bool
                        , file :: String
                        , blacklist :: String
@@ -20,6 +19,7 @@ defaultOptions = Options { instrumentLoad = False
                          , instrumentBitcast = False
                          , instrumentCall = False
                          , emitChecks = False
+                         , instrumentStack = False
                          , file = ""
                          , blacklist = ""
                          }
@@ -41,12 +41,9 @@ optParser = Options
   <*> switch
       ( long "checks"
       <> help "Enable integrity checks for dynamically loaded metadata" )
-  -- ~ <*> switch
-      -- ~ ( long "heap"
-      -- ~ <> help "Instrument heap allocations" )
-  -- ~ <*> switch
-      -- ~ ( long "stack"
-      -- ~ <> help "Instrument stack allocations" )
+  <*> switch
+      ( long "stack"
+      <> help "Instrument stack allocations" )
   -- ~ <*> switch
       -- ~ ( long "globals"
       -- ~ <> help "Instrument globals (allocations handled by the linker)" )

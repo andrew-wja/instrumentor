@@ -33,20 +33,17 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , renamingCandidates :: Data.Set.Set Name
                                , wrapperFunctionPrototypes :: Map String Type
                                , runtimeFunctionPrototypes :: Map String Type
-
                                -- metadataTable must be saved and restored around basic block entry and exit,
                                -- otherwise we will leak metadata identifiers and potentially violate SSA form.
                                , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-
+                               -- Unlike metadataTable, stackMetadataTable only needs saving and restoring around function entry and exit
+                               , stackMetadataTable :: Map Operand (Operand, Operand, Operand, Operand)
                                -- The command line options are stored for inspection
                                , options :: CLI.Options
-
                                -- The current function we are processing (needed for decent error reporting)
                                , current :: Maybe Global
-
                                -- The set of known safe pointers
                                , safe :: Data.Set.Set Name
-
                                -- The set of ignored function symbols
                                , blacklist :: Data.Set.Set Name
                                }
@@ -54,7 +51,8 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty Data.Set.empty
-                               Data.Map.empty Data.Map.empty Data.Map.empty
+                               Data.Map.empty Data.Map.empty
+                               Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
 
@@ -180,6 +178,7 @@ instrument blist opts m = do
                          , localStackFrameLockPtr = Nothing
                          , current = Just f
                          , safe = Data.Set.empty
+                         , stackMetadataTable = Data.Map.empty
                          }
         metadataTable' <- gets metadataTable
         instrumentPointerArgs firstBlockLabel $ fst $ parameters f
@@ -264,7 +263,7 @@ instrument blist opts m = do
     -- Subsequent use of a leaked stack-allocated variable from inside the function
     -- will trigger a runtime error with a key mismatch.
     emitLocalKeyAndLockDestruction = do
-      keyPtr <- liftM fromJust $ gets localStackFrameKeyPtr
+      keyPtr <- gets (fromJust . localStackFrameKeyPtr)
       key <- load keyPtr 0
       (fname, fproto) <- gets ((!! "__softboundcets_destroy_stack_key") . runtimeFunctionPrototypes)
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
@@ -309,17 +308,39 @@ instrument blist opts m = do
         ")" ++ " while processing instruction " ++ (unpack $ ppll inst)
 
     instrumentInst i@(v := o)
-      | (Alloca {}) <- o = do
+      | (Alloca ty count _ _) <- o = do
+        -- We emit the alloca first because we reference the result in the instrumentation
         emitNamedInst i
         modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+        enable <- gets (CLI.instrumentStack . options)
+        when enable $ do
+          eltSize <- sizeof 64 ty
+          intCount <- if isJust count
+                      then sext (fromJust count) i64
+                      else pure $ ConstantOperand $ Const.Int 64 1
+          allocSize <- mul eltSize intCount
+          base <- bitcast (LocalReference (ptr ty) v) (ptr i8)
+          intBase <- ptrtoint base i64
+          intBound <- add allocSize intBase
+          bound <- inttoptr intBound (ptr i8)
+          basePtr <- alloca (ptr i8) Nothing 8
+          boundPtr <- alloca (ptr i8) Nothing 8
+          keyPtr <- gets (fromJust . localStackFrameKeyPtr)
+          lockPtr <- gets (fromJust . localStackFrameLockPtr)
+          store basePtr 8 base
+          store boundPtr 8 bound
+          modify $ \s -> s { stackMetadataTable = Data.Map.insert (LocalReference (ptr ty) v) (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
 
       | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)
         when (enable && (not $ isFunctionType ty)) $ do
           unsafe <- gets (not . Data.Set.member n . safe)
           haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
-          when (unsafe && haveMetadata) $ do
-            (basePtr, boundPtr, keyPtr, lockPtr) <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
+          haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
+          when (unsafe && (haveMetadata || haveStackMetadata)) $ do
+            (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
+                                                    then liftM (verifyMetadata i) $ gets ((! addr) . stackMetadataTable)
+                                                    else liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
             base <- load basePtr 0
             bound <- load boundPtr 0
             addr' <- bitcast addr (ptr i8)
@@ -372,13 +393,17 @@ instrument blist opts m = do
       | (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
         when (not $ isFunctionType ty) $ do
           haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
-          when haveMetadata $ do
+          haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
+          when (haveMetadata || haveStackMetadata) $ do
             ty' <- index (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
             when (isJust ty') $ do
               let newPtr = LocalReference (ptr $ fromJust ty') v
-              newMetadata <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
+              newMetadata <- if haveStackMetadata
+                             then liftM (verifyMetadata i) $ gets ((! addr) . stackMetadataTable)
+                             else liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
+              -- We might get a pointer back from getelementptr that does not point to the stack
               modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
         emitNamedInst i
 
@@ -389,10 +414,16 @@ instrument blist opts m = do
         else do
           when (not $ isFunctionType ty') $ do
             haveMetadata <- gets ((Data.Map.member addr) . metadataTable)
-            when haveMetadata $ do
+            haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
+            when (haveMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
-              newMetadata <- liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
-              modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
+              newMetadata <- if haveStackMetadata
+                             then liftM (verifyMetadata i) $ gets ((! addr) . stackMetadataTable)
+                             else liftM (verifyMetadata i) $ gets ((! addr) . metadataTable)
+              -- Bitcasting a pointer to the stack doesn't make it not a pointer to the stack
+              if haveStackMetadata
+              then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
+              else modify $ \s -> s { metadataTable = Data.Map.insert newPtr newMetadata $ metadataTable s }
           emitNamedInst i
 
       | otherwise = do
@@ -425,9 +456,12 @@ instrument blist opts m = do
         enable <- gets (CLI.instrumentStore . options)
         when (enable && (not $ isFunctionType ty)) $ do
           haveTargetMetadata <- gets ((Data.Map.member tgt) . metadataTable)
+          haveTargetStackMetadata <- gets ((Data.Map.member tgt) . stackMetadataTable)
           unsafe <- gets (not . Data.Set.member n . safe)
-          when (unsafe && haveTargetMetadata) $ do
-            (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
+          when (unsafe && (haveTargetMetadata || haveTargetStackMetadata)) $ do
+            (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- if haveTargetStackMetadata
+                                                                then liftM (verifyMetadata i) $ gets ((! tgt) . stackMetadataTable)
+                                                                else liftM (verifyMetadata i) $ gets ((! tgt) . metadataTable)
 
             emitCheck <- gets (CLI.emitChecks . options)
             when emitCheck $ do
@@ -460,8 +494,11 @@ instrument blist opts m = do
           let storedValueIsHandled = isLocalReference src
           when (storedValueIsPointer && storedValueIsHandled) $ do
             haveSourceMetadata <- gets ((Data.Map.member src) . metadataTable)
-            when haveSourceMetadata $ do
-              (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- liftM (verifyMetadata i) $ gets ((! src) . metadataTable)
+            haveSourceStackMetadata <- gets ((Data.Map.member src) . stackMetadataTable)
+            when (haveSourceMetadata || haveSourceStackMetadata) $ do
+              (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- if haveSourceStackMetadata
+                                                                  then liftM (verifyMetadata i) $ gets ((! src) . stackMetadataTable)
+                                                                  else liftM (verifyMetadata i) $ gets ((! src) . metadataTable)
 
               emitCheck <- gets (CLI.emitChecks . options)
               when emitCheck $ do
@@ -525,14 +562,19 @@ instrument blist opts m = do
       store boundPtr 8 bound
       store keyPtr 8 key
       store lockPtr 8 lock
+      -- We cannot assume that function arguments are always passed on the stack. If we could, we could update stackMetadataTable here instead.
       modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
     emitMetadataStoreToShadowStack :: Maybe Name -> Operand -> Integer -> _
     emitMetadataStoreToShadowStack callee op@(LocalReference (PointerType {}) _) ix = do
       haveMetadata <- gets ((Data.Map.member op) . metadataTable)
-      (basePtr, boundPtr, keyPtr, lockPtr) <- if haveMetadata
-                                              then gets ((! op) . metadataTable)
+      haveStackMetadata <- gets ((Data.Map.member op) . stackMetadataTable)
+      (basePtr, boundPtr, keyPtr, lockPtr) <- if (haveMetadata || haveStackMetadata)
+                                              then
+                                                if haveStackMetadata
+                                                then gets ((! op) . stackMetadataTable)
+                                                else gets ((! op) . metadataTable)
                                               else do
                                                 fn <- gets (name . fromJust . current)
                                                 tell ["in function " ++ (unpack $ ppll fn) ++
