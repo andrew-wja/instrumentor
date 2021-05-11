@@ -13,7 +13,7 @@ A `Makefile` is provided to build `instrumentor` and dependencies. Just say
 
 If you followed the build instructions above, you will have built the
 `instrumentor` executable at `dist/instrumentor` and the runtimes at
-`runtimes-build`.
+`dist/runtimes/release`.
 
 ### Modifying Your Build
 
@@ -51,7 +51,9 @@ If you do not wish to install the runtimes and headers shipped with
 such as `LD_LIBRARY_PATH` to temporarily extend search paths at build time.
 Examples of how to do this can be found in the `test` directory, which uses
 separate compilation to build the test programs and their instrumented
-versions.
+versions. If you have not installed the runtime shared libraries system-wide,
+you need to ensure that the dynamic linker can find them in
+`dist/runtimes/{release,debug}` when your executable is launched.
 
 ### Runtime Selection
 

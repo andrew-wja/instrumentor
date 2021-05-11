@@ -1,6 +1,6 @@
-.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor test debug-test clean really-clean
+.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test clean really-clean
 
-all: ensure-submodules build-llvm build-release-runtimes build-instrumentor dist/instrumentor
+all: ensure-submodules build-llvm build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release
 
 ensure-submodules:
 	git submodule update --init --recursive
@@ -25,6 +25,14 @@ build-instrumentor:
 dist/instrumentor: build-instrumentor
 	mkdir -p dist
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack --local-bin-path dist install
+
+dist/runtimes/release: build-release-runtimes
+	mkdir -p $@
+	cp -r runtimes-build/lib/* dist/runtimes/release/
+
+dist/runtimes/debug: build-debug-runtimes
+	mkdir -p $@
+	cp -r runtimes-build/lib/* dist/runtimes/debug/
 
 test: build-release-runtimes
 	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
