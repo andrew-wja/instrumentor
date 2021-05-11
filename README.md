@@ -82,8 +82,9 @@ functions.
 
 ### Building `instrumentor` manually
 
-Since we are using a local build of LLVM, either modify `$PATH` and
-`$LD_LIBRARY_PATH` permanently or prefix your shell commands, for example:
+Since we are using a local build of LLVM, you will either need to modify
+`$PATH` and `$LD_LIBRARY_PATH` permanently or prefix your shell commands, for
+example:
 
 ```
 LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$PATH stack build
