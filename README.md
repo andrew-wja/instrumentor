@@ -20,7 +20,7 @@ If you followed the build instructions above, you will have built the
 Modifying your build to include instrumentation with `instrumentor` is
 relatively straightforward, but of course will depend on the complexity of the
 build you begin with. If you are using something like the traditional separate
-compilation workflow, integrating `instrumentor` into you build should be quite
+compilation workflow, integrating `instrumentor` into your build should be quite
 straightforward.
 
 Assuming you have a build rule for object files which looks something like
