@@ -57,7 +57,7 @@ you need to ensure that the dynamic linker can find them in
 
 ### Runtime Selection
 
-`instrumentor`s runtimes are simple shared libraries which implement the
+The `instrumentor` runtimes are simple shared libraries which implement the
 book-keeping required to check various properties of the program at runtime.
 Since the tool generates calls to these runtime functions when instrumenting
 your program, you will need to link your final executable with one of the
