@@ -7,3 +7,4 @@ llvm-root/
 llvm-patches/
 runtimes-build/
 dist/
+dist-newstyle/

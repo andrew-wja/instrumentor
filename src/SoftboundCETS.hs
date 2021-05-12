@@ -1,7 +1,17 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PartialTypeSignatures #-}
-module SoftboundCETS (instrument) where
+
+{-|
+Module      : SoftboundCETS
+Description : An implementation of the SoftboundCETS instrumentation algorithm
+Copyright   : (c) Andrew Anderson, 2021
+License     : BSD-3
+Maintainer  : aanderso@tcd.ie
+Stability   : experimental
+-}
+
+module SoftboundCETS where
 
 import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
@@ -11,7 +21,7 @@ import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, intercalate)
-import LLVM.AST hiding (index)
+import LLVM.AST hiding (index, Metadata)
 import LLVM.AST.Global
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
@@ -26,28 +36,45 @@ import Data.Text.Lazy (unpack)
 import Utils
 import qualified CLI
 
+-- | Metadata is a 4-tuple of pointers to stack-allocated entities:
+--   the base pointer, bound pointer, key value, and lock location
+--   associated with some user pointer.
+type Metadata = (Operand, Operand, Operand, Operand)
+
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
+                                 -- ^ Pointer to the global lock.
                                , localStackFrameKeyPtr :: Maybe Operand
+                                 -- ^ Pointer to the key value for the current stack frame.
                                , localStackFrameLockPtr :: Maybe Operand
+                                 -- ^ Pointer to the lock location for the current stack frame.
                                , instrumentationCandidates :: Data.Set.Set Name
+                                 -- ^ The set of names of functions to instrument in the current module.
                                , renamingCandidates :: Data.Set.Set Name
+                                 -- ^ The set of names of functions to rename in the current module.
+                                 -- Renamed functions are prefixed with "softboundcets_".
                                , wrapperFunctionPrototypes :: Map String Type
+                                 -- ^ Prototypes of the runtime wrapper functions, used to create calls.
                                , runtimeFunctionPrototypes :: Map String Type
-                               -- metadataTable must be saved and restored around basic block entry and exit,
-                               -- otherwise we will leak metadata identifiers and potentially violate SSA form.
-                               , metadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-                               -- Unlike metadataTable, stackMetadataTable only needs saving and restoring around function entry and exit
-                               , stackMetadataTable :: Map Operand (Operand, Operand, Operand, Operand)
-                               -- The command line options are stored for inspection
+                                 -- ^ Prototypes of the runtime instrumentation functions, used to create calls.
+                               , metadataTable :: Map Operand Metadata
+                               -- ^ The symbol table mapping pointers to their local metadata.
+                               --  'metadataTable' must be saved and restored around basic block entry and exit,
+                               --   otherwise we will leak metadata identifiers and potentially violate SSA form.
+                               , stackMetadataTable :: Map Operand Metadata
+                               -- ^ The symbol table mapping pointers to stack allocated entities to their metadata.
+                               --  'stackMetadataTable' only needs saving and restoring around function entry and exit.
+                               --  This is because it's always possible to instrument stack accesses in a way that preserves SSA form without doing any extra analysis.
                                , options :: CLI.Options
-                               -- The current function we are processing (needed for decent error reporting)
+                               -- ^ The command line options are stored for inspection.
                                , current :: Maybe Global
-                               -- The set of known safe pointers
+                               -- ^ The current function we are processing (needed for decent error reporting).
                                , safe :: Data.Set.Set Name
-                               -- The set of ignored function symbols
+                               -- ^ The set of known safe pointers.
                                , blacklist :: Data.Set.Set Name
+                               -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                }
 
+-- | Create an empty 'SBCETSState'
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty Data.Set.empty
@@ -56,6 +83,7 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
 
+-- | The initial 'SBCETSState' has 'wrapperFunctionPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
   { wrapperFunctionPrototypes = Data.Map.fromList [
@@ -89,13 +117,16 @@ initSBCETSState = emptySBCETSState
     ]
   }
 
+-- The set of names of standard library functions which have runtime wrappers.
 wrappedFunctions :: Data.Set.Set Name
+-- | Map from the names of standard library functions to the names of their runtime wrappers.
 wrappedFunctionNames :: Map Name Name
 (wrappedFunctions, wrappedFunctionNames) =
   let names = [ "calloc", "free", "main", "malloc", "realloc" ]
   in (Data.Set.fromList $ map mkName names,
       Data.Map.fromList $ map (\n -> (mkName n, mkName ("softboundcets_" ++ n))) names)
 
+-- | Decide whether the given function symbol is a function that needs instrumentation.
 ignore :: Data.Set.Set Name -> Name -> Bool
 ignore blist func
  | isInfixOfName "__softboundcets" func = True
@@ -108,6 +139,7 @@ ignore blist func
     isInfixOfName s (Name s') = isInfixOf s $ show s'
     isInfixOfName _ _ = False
 
+-- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: [String] -> CLI.Options -> Module -> IO Module
 instrument blist opts m = do
   let (warnings, instrumented) = instrumentDefinitions $ moduleDefinitions m
@@ -646,7 +678,7 @@ instrument blist opts m = do
       emitInstrVoid i
 
     -- | Index into a type with a list of consecutive 'Operand' indices.
-    -- May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
+    --   May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
     index :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
     index ty [] = pure $ Just ty
     index (PointerType ty _) (_:is') = index ty is'

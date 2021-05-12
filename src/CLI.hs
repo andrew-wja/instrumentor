@@ -1,16 +1,25 @@
+{-|
+Module      : CLI
+Description : Command-line interface definition
+Copyright   : (c) Andrew Anderson, 2021
+License     : BSD-3
+Maintainer  : aanderso@tcd.ie
+Stability   : experimental
+-}
+
 module CLI where
 
 import Options.Applicative
 
-data Options = Options { instrumentLoad :: Bool
-                       , instrumentStore :: Bool
-                       , instrumentBitcast :: Bool
-                       , instrumentCall :: Bool
-                       , emitChecks :: Bool
-                       , instrumentStack :: Bool
-                       -- ~ , instrumentGlobals :: Bool
-                       , file :: String
-                       , blacklist :: String
+data Options = Options { instrumentLoad :: Bool -- ^ Whether to instrument load instructions
+                       , instrumentStore :: Bool -- ^ Whether to instrument store instructions
+                       , instrumentBitcast :: Bool -- ^ Whether to instrument pointer casts
+                       , instrumentCall :: Bool -- ^ Whether to instrument function calls
+                       , emitChecks :: Bool -- ^ Whether to emit runtime metadata validity checks
+                       , instrumentStack :: Bool -- ^ Whether to instrument stack allocations
+                       --, instrumentGlobals :: Bool
+                       , file :: String -- ^ The path to the input module for instrumentation
+                       , blacklist :: String -- ^ Function symbols in the blacklist will not be instrumented
                        }
 
 defaultOptions :: Options

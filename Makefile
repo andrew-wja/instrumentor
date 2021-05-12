@@ -42,8 +42,11 @@ test: build-release-runtimes
 debug-test: build-debug-runtimes
 	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
 
+dist/doc:
+	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack haddock --haddock-arguments '--hyperlinked-source --odir=dist/doc'
+
 dist-clean:
-	rm -rf dist
+	rm -rf dist*
 
 clean: dist-clean
 	stack clean
