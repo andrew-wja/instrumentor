@@ -18,7 +18,7 @@ import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop)
-import Data.Maybe (isJust, fromJust, isNothing)
+import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, intercalate, nub, sort)
 import LLVM.AST hiding (index, Metadata)
@@ -409,7 +409,10 @@ instrument blist opts m = do
         when enable $ do
           eltSize <- sizeof 64 ty
           intCount <- if isJust count
-                      then sext (fromJust count) i64
+                      then
+                        if not ((typeOf $ fromJust count) == i64)
+                        then sext (fromJust count) i64
+                        else pure $ fromJust count
                       else pure $ ConstantOperand $ Const.Int 64 1
           allocSize <- mul eltSize intCount
           base <- bitcast (LocalReference (ptr ty) v) (ptr i8)
