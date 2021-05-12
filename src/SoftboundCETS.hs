@@ -18,9 +18,9 @@ import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop)
-import Data.Maybe (isJust, fromJust)
+import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
-import Data.List (isInfixOf, intercalate)
+import Data.List (isInfixOf, intercalate, nub, sort)
 import LLVM.AST hiding (index, Metadata)
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -74,6 +74,8 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                , dontCareMetadata :: Maybe Metadata
                                -- ^ Metadata that can never cause any runtime checks to fail.
+                               , preallocatedMetadataStorage :: Map Operand Metadata
+                               -- ^ Pre-allocated stack slots to hold the metadata for each pointer requiring a runtime metadata load
                                }
 
 -- | Create an empty 'SBCETSState'
@@ -84,7 +86,7 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
-                               Nothing
+                               Nothing Data.Map.empty
 
 -- | The initial 'SBCETSState' has 'wrapperFunctionPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
@@ -214,8 +216,10 @@ instrument blist opts m = do
                          , safe = Data.Set.empty
                          , stackMetadataTable = Data.Map.empty
                          , dontCareMetadata = Nothing
+                         , preallocatedMetadataStorage = Data.Map.empty
                          }
         metadataTable' <- gets metadataTable
+        tell ["Instrumenting function " ++ (unpack $ ppll $ name f)]
         emitInstrumentationSetup f
         instrumentBlocks $ basicBlocks f
         modify $ \s -> s { metadataTable = metadataTable' }
@@ -248,13 +252,38 @@ instrument blist opts m = do
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
                 [(nullPtr, []), (dcBasePtr, []), (dcBoundPtr, []), (dcKeyPtr, []), (dcLockPtr, [])]
       modify $ \s -> s { dontCareMetadata = Just (dcBasePtr, dcBoundPtr, dcKeyPtr, dcLockPtr) }
-      -- TODO: set up eager stack slots for other potential metadata here
+      metadataAllocationSites <- liftM (nub . sort . concat) $ mapM collectMetadataAllocationSites $ basicBlocks f
+      mapM_ createMetadataStackSlots metadataAllocationSites
       emitTerm $ Br firstBlockLabel []
       where
         isNonFunctionPointerParam p
           | (Parameter (PointerType (FunctionType {}) _) _ _) <- p = False
           | (Parameter (PointerType {}) _ _) <- p = True
           | otherwise = False
+
+        collectMetadataAllocationSites (BasicBlock _ i _) = do
+          liftM concat $ mapM examineMetadataAllocationSite i
+
+        examineMetadataAllocationSite (v := o)
+          | (Load _ (LocalReference (PointerType ty _) _) _ _ _) <- o = do
+              enable <- gets (CLI.instrumentLoad . options)
+              if (enable && (not $ isFunctionType ty) && isPointerType ty)
+              then return [LocalReference ty v]
+              else return []
+
+          | otherwise = return []
+
+        examineMetadataAllocationSite _ = return []
+
+        createMetadataStackSlots p@(LocalReference {}) = do
+          basePtr <- alloca (ptr i8) Nothing 8
+          boundPtr <- alloca (ptr i8) Nothing 8
+          keyPtr <- alloca (i64) Nothing 8
+          lockPtr <- alloca (ptr i8) Nothing 8
+          tell $ ["Preallocating space for metadata of pointer: " ++ (unpack $ ppll p)]
+          modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ preallocatedMetadataStorage s }
+
+        createMetadataStackSlots x = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll x)
 
     emitInstrumentationSetup _ = undefined
 
@@ -324,22 +353,26 @@ instrument blist opts m = do
         { partialBlockTerm = Just t }
 
     getMetadataForPointee addr@(LocalReference (PointerType _ _) _) = do
-      basePtr <- alloca (ptr i8) Nothing 8
-      boundPtr <- alloca (ptr i8) Nothing 8
-      keyPtr <- alloca (i64) Nothing 8
-      lockPtr <- alloca (ptr i8) Nothing 8
-      addr' <- bitcast addr (ptr i8)
-      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-      emitCheck <- gets (CLI.emitChecks . options)
-      when emitCheck $ do
-        (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                  [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-        return ()
-
-      return (basePtr, boundPtr, keyPtr, lockPtr)
+      -- There are two cases here: addr points to the stack, or addr is arbitrary
+      stackMd <- gets ((Data.Map.lookup addr) . stackMetadataTable)
+      anyMd <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
+      if (isNothing stackMd && isNothing anyMd)
+      then error $ "No storage allocated for metadata of pointer: " ++ (unpack $ ppll addr)
+      else do
+        (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust stackMd
+                                                then gets ((! addr) . stackMetadataTable)
+                                                else gets ((! addr) . preallocatedMetadataStorage)
+        addr' <- bitcast addr (ptr i8)
+        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                  [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        emitCheck <- gets (CLI.emitChecks . options)
+        when emitCheck $ do
+          (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                    [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+          return ()
+        return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ (unpack $ ppll x)
 
@@ -374,10 +407,16 @@ instrument blist opts m = do
           bound <- inttoptr intBound (ptr i8)
           basePtr <- alloca (ptr i8) Nothing 8
           boundPtr <- alloca (ptr i8) Nothing 8
-          keyPtr <- gets (fromJust . localStackFrameKeyPtr)
-          lockPtr <- gets (fromJust . localStackFrameLockPtr)
+          keyPtr <- alloca (i64) Nothing 8
+          lockPtr <- alloca (ptr i8) Nothing 8
           store basePtr 8 base
           store boundPtr 8 bound
+          functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
+          functionLockPtr <- gets (fromJust . localStackFrameLockPtr)
+          functionKey <- load functionKeyPtr 0
+          functionLock <- load functionLockPtr 0
+          store keyPtr 8 functionKey
+          store lockPtr 8 functionLock
           modify $ \s -> s { stackMetadataTable = Data.Map.insert (LocalReference (ptr ty) v) (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
 
       | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
@@ -611,8 +650,8 @@ instrument blist opts m = do
       store boundPtr 8 bound
       store keyPtr 8 key
       store lockPtr 8 lock
-      -- We cannot assume that function arguments are always passed on the stack. If we could, we could update stackMetadataTable here instead.
-      modify $ \s -> s { metadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ metadataTable s }
+      -- Treat function arguments as always passed on the stack
+      modify $ \s -> s { stackMetadataTable = Data.Map.insert (LocalReference localTy localName) (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
 
     -- Store the metadata for a pointer on the shadow stack at the specified position.
     emitMetadataStoreToShadowStack :: Maybe Name -> Operand -> Integer -> _
@@ -634,7 +673,7 @@ instrument blist opts m = do
                                                           then "(wrapped) " ++ (unpack $ ppll $ fromJust callee)
                                                           else (unpack $ ppll $ fromJust callee))
                                                        else " being returned") ++
-                                                      " (storing don't-care metadata to callee shadow stack)" ]
+                                                      " (storing don't-care metadata to callee shadow stack)"]
                                                 dcMetadata <- gets (fromJust . dontCareMetadata)
                                                 return dcMetadata
 
