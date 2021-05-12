@@ -1,4 +1,4 @@
-.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test clean really-clean
+.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test dist-clean clean really-clean
 
 all: ensure-submodules build-llvm build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release
 
@@ -29,10 +29,12 @@ dist/instrumentor: build-instrumentor
 dist/runtimes/release: build-release-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/release/
+	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
 
 dist/runtimes/debug: build-debug-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/debug/
+	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
 
 test: build-release-runtimes
 	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
@@ -40,8 +42,10 @@ test: build-release-runtimes
 debug-test: build-debug-runtimes
 	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
 
-clean:
+dist-clean:
 	rm -rf dist
+
+clean: dist-clean
 	stack clean
 	for x in `ls test`; do $(MAKE) -C test/$$x clean; done
 
