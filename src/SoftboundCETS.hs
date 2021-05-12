@@ -353,26 +353,37 @@ instrument blist opts m = do
         { partialBlockTerm = Just t }
 
     getMetadataForPointee addr@(LocalReference (PointerType _ _) _) = do
-      -- There are two cases here: addr points to the stack, or addr is arbitrary
+      -- There are four cases here.
+      -- Case 1: addr points to the stack
       stackMd <- gets ((Data.Map.lookup addr) . stackMetadataTable)
-      anyMd <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
-      if (isNothing stackMd && isNothing anyMd)
-      then error $ "No storage allocated for metadata of pointer: " ++ (unpack $ ppll addr)
-      else do
-        (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust stackMd
-                                                then gets ((! addr) . stackMetadataTable)
-                                                else gets ((! addr) . preallocatedMetadataStorage)
-        addr' <- bitcast addr (ptr i8)
-        (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                  [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-        emitCheck <- gets (CLI.emitChecks . options)
-        when emitCheck $ do
-          (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-          _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                    [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-          return ()
-        return (basePtr, boundPtr, keyPtr, lockPtr)
+      -- Case 2: addr is a pointer for which we preallocated metadata storage
+      preallocMd <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
+      -- Case 3: addr is an arbitrary pointer computed at runtime in this basic block (so it already has metadata storage allocated)
+      blockMd <- gets ((Data.Map.lookup addr) . metadataTable)
+      -- Case 4: addr is an arbitrary pointer computed at runtime outside this basic block. We need to allocate metadata storage.
+      (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust stackMd
+                                              then gets ((! addr) . stackMetadataTable)
+                                              else if isJust preallocMd
+                                              then gets ((! addr) . preallocatedMetadataStorage)
+                                              else if isJust blockMd
+                                              then gets ((! addr) . metadataTable)
+                                              else do
+                                                 basePtr <- alloca (ptr i8) Nothing 8
+                                                 boundPtr <- alloca (ptr i8) Nothing 8
+                                                 keyPtr <- alloca (i64) Nothing 8
+                                                 lockPtr <- alloca (ptr i8) Nothing 8
+                                                 return (basePtr, boundPtr, keyPtr, lockPtr)
+      addr' <- bitcast addr (ptr i8)
+      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      emitCheck <- gets (CLI.emitChecks . options)
+      when emitCheck $ do
+        (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
+        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+                  [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        return ()
+      return (basePtr, boundPtr, keyPtr, lockPtr)
 
     getMetadataForPointee x@_ = error $ "getMetadataForPointee: expected pointer but saw " ++ (unpack $ ppll x)
 
