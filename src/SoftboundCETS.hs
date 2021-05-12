@@ -72,6 +72,8 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The set of known safe pointers.
                                , blacklist :: Data.Set.Set Name
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
+                               , dontCareMetadata :: Maybe Metadata
+                               -- ^ Metadata that can never cause any runtime checks to fail.
                                }
 
 -- | Create an empty 'SBCETSState'
@@ -82,6 +84,7 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
+                               Nothing
 
 -- | The initial 'SBCETSState' has 'wrapperFunctionPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
@@ -203,7 +206,6 @@ instrument blist opts m = do
 
     instrumentFunction shouldRename f@(Function {}) = do
       let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
-      let firstBlockLabel = bbName $ head $ basicBlocks f
       (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
         modify $ \s -> s { globalLockPtr = Nothing
                          , localStackFrameKeyPtr = Nothing
@@ -211,9 +213,10 @@ instrument blist opts m = do
                          , current = Just f
                          , safe = Data.Set.empty
                          , stackMetadataTable = Data.Map.empty
+                         , dontCareMetadata = Nothing
                          }
         metadataTable' <- gets metadataTable
-        instrumentPointerArgs firstBlockLabel $ fst $ parameters f
+        emitInstrumentationSetup f
         instrumentBlocks $ basicBlocks f
         modify $ \s -> s { metadataTable = metadataTable' }
         return ()
@@ -226,20 +229,34 @@ instrument blist opts m = do
 
     instrumentFunction _ _ = undefined
 
-    -- Setup the instrumentation of any non-function pointer arguments, and
+    -- Setup the instrumentation of any non-function pointer arguments, create
+    -- stack slots eagerly for all potential locally allocated metadata and
     -- then branch unconditionally to the first block in the function body.
-    instrumentPointerArgs fblabel pms = do
-      let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isNonFunctionPointerArg pms
+    emitInstrumentationSetup f@(Function {}) = do
+      let firstBlockLabel = bbName $ head $ basicBlocks f
+      let pointerArgs = map (\(Parameter t n _) -> (t, n)) $ filter isNonFunctionPointerParam $ fst $ parameters f
       let shadowStackIndices :: [Integer] = [1..]
-      emitBlockStart (mkName "sbcets_parameter_metadata_init")
+      emitBlockStart (mkName "sbcets_metadata_init")
       zipWithM_ emitMetadataLoadFromShadowStack pointerArgs shadowStackIndices
-      emitTerm $ Br fblabel []
+      -- Create the don't-care metadata.
+      nullPtr <- inttoptr (int64 0) (ptr i8)
+      dcBasePtr <- alloca (ptr i8) Nothing 8
+      dcBoundPtr <- alloca (ptr i8) Nothing 8
+      dcKeyPtr <- alloca (i64) Nothing 8
+      dcLockPtr <- alloca (ptr i8) Nothing 8
+      (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+                [(nullPtr, []), (dcBasePtr, []), (dcBoundPtr, []), (dcKeyPtr, []), (dcLockPtr, [])]
+      modify $ \s -> s { dontCareMetadata = Just (dcBasePtr, dcBoundPtr, dcKeyPtr, dcLockPtr) }
+      -- TODO: set up eager stack slots for other potential metadata here
+      emitTerm $ Br firstBlockLabel []
       where
-        isNonFunctionPointerArg (Parameter (PointerType ty _) _ _) =
-          case ty of
-            (FunctionType {}) -> False
-            _ -> True
-        isNonFunctionPointerArg _ = False
+        isNonFunctionPointerParam p
+          | (Parameter (PointerType (FunctionType {}) _) _ _) <- p = False
+          | (Parameter (PointerType {}) _ _) <- p = True
+          | otherwise = False
+
+    emitInstrumentationSetup _ = undefined
 
     instrumentBlocks [] = return ()
 
@@ -618,15 +635,8 @@ instrument blist opts m = do
                                                           else (unpack $ ppll $ fromJust callee))
                                                        else " being returned") ++
                                                       " (storing don't-care metadata to callee shadow stack)" ]
-                                                nullPtr <- inttoptr (int64 0) (ptr i8)
-                                                basePtr <- alloca (ptr i8) Nothing 8
-                                                boundPtr <- alloca (ptr i8) Nothing 8
-                                                keyPtr <- alloca (i64) Nothing 8
-                                                lockPtr <- alloca (ptr i8) Nothing 8
-                                                (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-                                                _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                                                          [(nullPtr, []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-                                                return (basePtr, boundPtr, keyPtr, lockPtr)
+                                                dcMetadata <- gets (fromJust . dontCareMetadata)
+                                                return dcMetadata
 
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
@@ -677,19 +687,19 @@ instrument blist opts m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
-    -- | Index into a type with a list of consecutive 'Operand' indices.
-    --   May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
-    index :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-    index ty [] = pure $ Just ty
-    index (PointerType ty _) (_:is') = index ty is'
-    index (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
-      index (head $ drop (fromIntegral val) elTys) is'
-    index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
-    index (VectorType _ elTy) (_:is') = index elTy is'
-    index (ArrayType _ elTy) (_:is') = index elTy is'
-    index (NamedTypeReference nm) is' = do
-      mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
-      case mayTy of
-        Nothing -> pure Nothing
-        Just ty -> index ty is'
-    index t (_:_) = error $ "Can't index into type: " ++ show t
+-- | Index into a type with a list of consecutive 'Operand' indices.
+--   May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
+index :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+index ty [] = pure $ Just ty
+index (PointerType ty _) (_:is') = index ty is'
+index (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+  index (head $ drop (fromIntegral val) elTys) is'
+index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
+index (VectorType _ elTy) (_:is') = index elTy is'
+index (ArrayType _ elTy) (_:is') = index elTy is'
+index (NamedTypeReference nm) is' = do
+  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
+  case mayTy of
+    Nothing -> pure Nothing
+    Just ty -> index ty is'
+index t (_:_) = error $ "Can't index into type: " ++ show t
