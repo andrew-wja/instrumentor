@@ -206,14 +206,13 @@ instrument blist opts m = do
                             , localStackFrameLockPtr = Nothing
                             , current = Just f
                             , safe = Data.Set.empty
+                            , blockMetadataTable = Data.Map.empty
                             , stackMetadataTable = Data.Map.empty
                             , dontCareMetadata = Nothing
                             , preallocatedMetadataStorage = Data.Map.empty
                             }
-            blockMetadataTable' <- gets blockMetadataTable
             emitInstrumentationSetup f
             instrumentBlocks $ basicBlocks f
-            modify $ \s -> s { blockMetadataTable = blockMetadataTable' }
             return ()
           emitDefn $ GlobalDefinition $ f { name = name', basicBlocks = blocks }
           return ()
@@ -263,9 +262,9 @@ instrument blist opts m = do
         enable <- gets (CLI.instrumentLoad . options)
         when (enable && (not $ isFunctionType ty)) $ do
           unsafe <- gets (not . Data.Set.member n . safe)
-          haveMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
+          haveBlockMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
           haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
-          when (unsafe && (haveMetadata || haveStackMetadata)) $ do
+          when (unsafe && (haveBlockMetadata || haveStackMetadata)) $ do
             (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
                                                     then gets ((! addr) . stackMetadataTable)
                                                     else gets ((! addr) . blockMetadataTable)
@@ -321,9 +320,9 @@ instrument blist opts m = do
 
       | (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
         when (not $ isFunctionType ty) $ do
-          haveMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
+          haveBlockMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
           haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
-          when (haveMetadata || haveStackMetadata) $ do
+          when (haveBlockMetadata || haveStackMetadata) $ do
             ty' <- index (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
@@ -342,9 +341,9 @@ instrument blist opts m = do
         then emitNamedInst i
         else do
           when (not $ isFunctionType ty') $ do
-            haveMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
+            haveBlockMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
             haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
-            when (haveMetadata || haveStackMetadata) $ do
+            when (haveBlockMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
               newMetadata <- if haveStackMetadata
                              then gets ((! addr) . stackMetadataTable)
@@ -491,24 +490,13 @@ instrument blist opts m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
--- | Look up or create (allocate on the stack) the metadata for the pointed-to address.
+-- | Look up or create (allocate on the stack) the metadata for the pointed-to pointer.
 getOrCreateMetadataForPointee :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
 getOrCreateMetadataForPointee addr
   | (LocalReference (PointerType _ _) _) <- addr = do
-    -- There are four cases here.
-    -- Case 1: addr points to the stack
-    stackMd <- gets ((Data.Map.lookup addr) . stackMetadataTable)
-    -- Case 2: addr is a pointer for which we preallocated metadata storage
-    preallocMd <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
-    -- Case 3: addr is an arbitrary pointer computed at runtime in this basic block (so it already has metadata storage allocated)
-    blockMd <- gets ((Data.Map.lookup addr) . blockMetadataTable)
-    -- Case 4: addr is an arbitrary pointer computed at runtime outside this basic block. We need to allocate metadata storage.
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust stackMd
-                                            then gets ((! addr) . stackMetadataTable)
-                                            else if isJust preallocMd
+    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
                                             then gets ((! addr) . preallocatedMetadataStorage)
-                                            else if isJust blockMd
-                                            then gets ((! addr) . blockMetadataTable)
                                             else do
                                               basePtr <- alloca (ptr i8) Nothing 8
                                               boundPtr <- alloca (ptr i8) Nothing 8
