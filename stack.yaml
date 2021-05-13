@@ -9,9 +9,9 @@ packages:
 - ./llvm-hs-pretty
 
 ghc-options:
-  "$locals": -Wall
+  "$locals": -Wall -Wno-name-shadowing -Wno-orphans -Wno-unused-imports
   "$targets": -Wall -Wno-partial-type-signatures
-  "$everything": -O3
+  "$everything": -O3 -fllvm
 
 extra-lib-dirs: [ llvm-root/lib ]
 
