@@ -229,6 +229,7 @@ instrument blist opts m = do
       | (Alloca ty count _ _) <- o = do
         -- We emit the alloca first because we reference the result in the instrumentation
         emitNamedInst i
+        -- The address of a stack allocation is always safe
         modify $ \s -> s { safe = Data.Set.insert v $ safe s }
         enable <- gets (CLI.instrumentStack . options)
         when enable $ do
@@ -335,7 +336,7 @@ instrument blist opts m = do
               modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
         emitNamedInst i
 
-      | (BitCast addr@(LocalReference (PointerType ty' _) _) ty _) <- o = do
+      | (BitCast addr@(LocalReference (PointerType ty' _) n) ty _) <- o = do
         enable <- gets (CLI.instrumentBitcast . options)
         if not enable
         then emitNamedInst i
@@ -343,6 +344,7 @@ instrument blist opts m = do
           when (not $ isFunctionType ty') $ do
             haveBlockMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
             haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
+            unsafe <- gets (not . Data.Set.member n . safe)
             when (haveBlockMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
               newMetadata <- if haveStackMetadata
@@ -352,6 +354,11 @@ instrument blist opts m = do
               if haveStackMetadata
               then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
               else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+              -- Bitcasting a safe pointer doesn't make it unsafe
+              if not unsafe
+              then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+              else return ()
+
           emitNamedInst i
 
       | otherwise = emitNamedInst i
