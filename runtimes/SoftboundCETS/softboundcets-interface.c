@@ -133,6 +133,80 @@ __softboundcets_printf("[temporal_store_dereference_check] key=%zx, lock=%p\n",
 }
 
 __WEAK__ void
+__softboundcets_destroy_stack_key(size_t key){
+  __softboundcets_stack_key_table_ptr--;
+
+  if (__softboundcets_stack_key_table_ptr == NULL) {
+    __softboundcets_printf("[destroy_stack_key] stack key table pointer is null\n");
+    __softboundcets_abort();
+  }
+
+  size_t *lock = (size_t *) __softboundcets_stack_key_table_ptr;
+
+  if (*lock != key) {
+    __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx\n", key, *lock);
+    __softboundcets_abort_reason("control flow anomaly");
+  }
+
+  *(lock) = 0;
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[destroy_stack_key] key=%zx\n", key);
+#endif
+  return;
+}
+
+__WEAK__ void
+__softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
+
+  size_t temp_id = __softboundcets_key_id_counter++;
+
+  *((size_t**) ptr_lock) = (size_t*)__softboundcets_allocate_lock_location();
+  *((size_t*) ptr_key) = temp_id;
+  **((size_t**) ptr_lock) = temp_id;
+
+  __softboundcets_allocation_secondary_trie_allocate(ptr);
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_allocation] ptr = %p, lock = %p, key = %zx\n",
+                           ptr, *ptr_lock, temp_id);
+#endif
+}
+
+__WEAK__ void
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
+
+  if (ptr_lock != NULL && ptr != NULL) {
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
+                           ptr, ptr_lock, *((size_t*) ptr_lock));
+#endif
+    size_t temp = *((size_t*)ptr_lock);
+
+    if(temp != key) {
+      __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
+                             key, temp, __softboundcets_lock_next_location);
+      __softboundcets_abort_reason("double free");
+    }
+
+    if (ptr_lock == (void*)__softboundcets_global_lock) {
+      __softboundcets_abort_reason("deallocating global variable");
+    }
+
+    *((size_t*)ptr_lock) = 0;
+    *((void**) ptr_lock) = __softboundcets_lock_next_location;
+    __softboundcets_lock_next_location = ptr_lock;
+    return;
+  } else {
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
+                           ptr, ptr_lock);
+#endif
+    return;
+  }
+}
+
+__WEAK__ void
 __softboundcets_memcopy_check(void* dest, void* src, size_t size,
                               void* dest_base, void* dest_bound,
                               void* src_base, void* src_bound,

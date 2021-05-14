@@ -230,30 +230,6 @@ __softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
 }
 
 __WEAK__ void
-__softboundcets_destroy_stack_key(size_t key){
-  __softboundcets_stack_key_table_ptr--;
-
-  if (__softboundcets_stack_key_table_ptr == NULL) {
-    __softboundcets_printf("[destroy_stack_key] stack key table pointer is null\n");
-    __softboundcets_abort();
-  }
-
-  size_t *lock = (size_t *) __softboundcets_stack_key_table_ptr;
-
-  if (*lock != key) {
-    __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx\n", key, *lock);
-    __softboundcets_abort_reason("control flow anomaly");
-  }
-
-  *(lock) = 0;
-
-#if defined(SOFTBOUNDCETS_DEBUG)
-  __softboundcets_printf("[destroy_stack_key] key=%zx\n", key);
-#endif
-  return;
-}
-
-__WEAK__ void
 __softboundcets_metadata_check(void** base,
                                void** bound,
                                size_t* key,

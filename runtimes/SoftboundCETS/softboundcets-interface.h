@@ -137,6 +137,12 @@ __softboundcets_metadata_store(void* addr_of_ptr,
 /* Miscellaneous routines */
 
 __WEAK__ void
+__softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key);
+
+__WEAK__ void
+__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key);
+
+__WEAK__ void
 __softboundcets_memcopy_check(void* dest, void* src, size_t size,
                               void* dest_base, void* dest_bound,
                               void* src_base, void* src_bound,
