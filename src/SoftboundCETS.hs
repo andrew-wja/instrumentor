@@ -233,6 +233,7 @@ instrument blist opts m = do
         modify $ \s -> s { safe = Data.Set.insert v $ safe s }
         enable <- gets (CLI.instrumentStack . options)
         when enable $ do
+          let resultPtr = LocalReference (ptr ty) v
           eltSize <- sizeof 64 ty
           intCount <- if isJust count
                       then
@@ -241,14 +242,11 @@ instrument blist opts m = do
                         else pure $ fromJust count
                       else pure $ ConstantOperand $ Const.Int 64 1
           allocSize <- mul eltSize intCount
-          base <- bitcast (LocalReference (ptr ty) v) (ptr i8)
+          base <- bitcast resultPtr (ptr i8)
           intBase <- ptrtoint base i64
           intBound <- add allocSize intBase
           bound <- inttoptr intBound (ptr i8)
-          basePtr <- alloca (ptr i8) Nothing 8
-          boundPtr <- alloca (ptr i8) Nothing 8
-          keyPtr <- alloca (i64) Nothing 8
-          lockPtr <- alloca (ptr i8) Nothing 8
+          (basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer resultPtr
           store basePtr 8 base
           store boundPtr 8 bound
           functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
@@ -608,6 +606,9 @@ emitInstrumentationSetup f
             if (enable && (not $ ignore bl fname) && isPointerType rt)
             then return [LocalReference rt v]
             else return []
+        | (v := o) <- site, (Alloca ty _ _ _) <- o = do
+            enable <- gets (CLI.instrumentStack . options)
+            if enable then return [LocalReference (ptr ty) v] else return []
         | otherwise = return []
 
       createMetadataStackSlots p
