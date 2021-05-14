@@ -292,7 +292,7 @@ instrument blist opts m = do
           let loadedValueIsPointer = isPointerType ty
           when loadedValueIsPointer $ do
             let loadedPtr = LocalReference ty v
-            loadedPtrMetadata <- getOrCreateMetadataForPointee addr
+            loadedPtrMetadata <- metadataForAddress addr
             modify $ \s -> s { blockMetadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ blockMetadataTable s }
 
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
@@ -390,10 +390,10 @@ instrument blist opts m = do
       | (Store _ tgt@(LocalReference (PointerType ty _) n) src _ _ _) <- o = do
         enable <- gets (CLI.instrumentStore . options)
         when (enable && (not $ isFunctionType ty)) $ do
-          haveTargetMetadata <- gets ((Data.Map.member tgt) . blockMetadataTable)
+          haveTargetBlockMetadata <- gets ((Data.Map.member tgt) . blockMetadataTable)
           haveTargetStackMetadata <- gets ((Data.Map.member tgt) . stackMetadataTable)
           unsafe <- gets (not . Data.Set.member n . safe)
-          when (unsafe && (haveTargetMetadata || haveTargetStackMetadata)) $ do
+          when (unsafe && (haveTargetBlockMetadata || haveTargetStackMetadata)) $ do
             (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- if haveTargetStackMetadata
                                                                 then gets ((! tgt) . stackMetadataTable)
                                                                 else gets ((! tgt) . blockMetadataTable)
@@ -425,9 +425,9 @@ instrument blist opts m = do
           let storedValueIsPointer = isPointerType ty
           let storedValueIsHandled = isLocalReference src
           when (storedValueIsPointer && storedValueIsHandled) $ do
-            haveSourceMetadata <- gets ((Data.Map.member src) . blockMetadataTable)
+            haveSourceBlockMetadata <- gets ((Data.Map.member src) . blockMetadataTable)
             haveSourceStackMetadata <- gets ((Data.Map.member src) . stackMetadataTable)
-            when (haveSourceMetadata || haveSourceStackMetadata) $ do
+            when (haveSourceBlockMetadata || haveSourceStackMetadata) $ do
               (srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr) <- if haveSourceStackMetadata
                                                                   then gets ((! src) . stackMetadataTable)
                                                                   else gets ((! src) . blockMetadataTable)
@@ -498,8 +498,8 @@ instrument blist opts m = do
       emitInstrVoid i
 
 -- | Look up or create (allocate on the stack) the metadata for the pointed-to pointer.
-getOrCreateMetadataForPointee :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
-getOrCreateMetadataForPointee addr
+metadataForAddress :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
+metadataForAddress addr
   | (LocalReference (PointerType _ _) _) <- addr = do
     preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
     (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
@@ -521,7 +521,23 @@ getOrCreateMetadataForPointee addr
                 [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return ()
     return (basePtr, boundPtr, keyPtr, lockPtr)
-  | otherwise = error $ "getOrCreateMetadataForPointee: expected pointer but saw " ++ (unpack $ ppll addr)
+  | otherwise = error $ "metadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
+
+-- | Look up or create (allocate on the stack) the metadata for the given pointer.
+metadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
+metadataForPointer addr
+  | (LocalReference (PointerType _ _) _) <- addr = do
+    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
+                                            then gets ((! addr) . preallocatedMetadataStorage)
+                                            else do
+                                              basePtr <- alloca (ptr i8) Nothing 8
+                                              boundPtr <- alloca (ptr i8) Nothing 8
+                                              keyPtr <- alloca (i64) Nothing 8
+                                              lockPtr <- alloca (ptr i8) Nothing 8
+                                              return (basePtr, boundPtr, keyPtr, lockPtr)
+    return (basePtr, boundPtr, keyPtr, lockPtr)
+  | otherwise = error $ "metadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
 isLocalReference :: Operand -> Bool
@@ -565,14 +581,8 @@ emitInstrumentationSetup f
     zipWithM_ emitMetadataLoadFromShadowStack pointerArgs shadowStackIndices
     -- Create the don't-care metadata.
     nullPtr <- inttoptr (int64 0) (ptr i8)
-    dcBasePtr <- alloca (ptr i8) Nothing 8
-    dcBoundPtr <- alloca (ptr i8) Nothing 8
-    dcKeyPtr <- alloca (i64) Nothing 8
-    dcLockPtr <- alloca (ptr i8) Nothing 8
-    (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-    _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-              [(nullPtr, []), (dcBasePtr, []), (dcBoundPtr, []), (dcKeyPtr, []), (dcLockPtr, [])]
-    modify $ \s -> s { dontCareMetadata = Just (dcBasePtr, dcBoundPtr, dcKeyPtr, dcLockPtr) }
+    dcMetadata <- metadataForAddress nullPtr
+    modify $ \s -> s { dontCareMetadata = Just dcMetadata }
     metadataAllocationSites <- liftM (nub . sort . concat) $ mapM collectMetadataAllocationSites $ basicBlocks f
     mapM_ createMetadataStackSlots metadataAllocationSites
     emitTerm $ Br firstBlockLabel []
@@ -591,6 +601,12 @@ emitInstrumentationSetup f
             enable <- gets (CLI.instrumentLoad . options)
             if (enable && (not $ isFunctionType ty) && isPointerType ty)
             then return [LocalReference ty v]
+            else return []
+        | (v := o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) _ _ _) <- o = do
+            enable <- gets (CLI.instrumentCall . options)
+            bl <- gets blacklist
+            if (enable && (not $ ignore bl fname) && isPointerType rt)
+            then return [LocalReference rt v]
             else return []
         | otherwise = return []
 
@@ -655,10 +671,7 @@ emitMetadataLoadFromShadowStack p ix
     key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
     (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
     lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
-    basePtr <- alloca (ptr i8) Nothing 8
-    boundPtr <- alloca (ptr i8) Nothing 8
-    keyPtr <- alloca (i64) Nothing 8
-    lockPtr <- alloca (ptr i8) Nothing 8
+    (basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer p
     store basePtr 8 base
     store boundPtr 8 bound
     store keyPtr 8 key

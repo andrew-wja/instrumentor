@@ -11,7 +11,7 @@ packages:
 ghc-options:
   "$locals": -Wall -Wno-name-shadowing -Wno-orphans -Wno-unused-imports
   "$targets": -Wall -Wno-partial-type-signatures
-  "$everything": -O3 -fllvm
+  "$everything": -O2
 
 extra-lib-dirs: [ llvm-root/lib ]
 
