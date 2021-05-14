@@ -327,9 +327,18 @@ instrument blist opts m = do
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
             when (isJust ty') $ do
               let newPtr = LocalReference (ptr $ fromJust ty') v
-              newMetadata <- if haveStackMetadata
-                             then gets ((! addr) . stackMetadataTable)
-                             else gets ((! addr) . blockMetadataTable)
+              (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
+                                                      then gets ((! addr) . stackMetadataTable)
+                                                      else gets ((! addr) . blockMetadataTable)
+              newMetadata@(basePtr', boundPtr', keyPtr', lockPtr') <- metadataForPointer newPtr
+              base <- load basePtr 0
+              bound <- load boundPtr 0
+              key <- load keyPtr 0
+              lock <- load lockPtr 0
+              store basePtr' 8 base
+              store boundPtr' 8 bound
+              store keyPtr' 8 key
+              store lockPtr' 8 lock
               -- We might get a pointer back from getelementptr that does not point to the stack
               modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
         emitNamedInst i
@@ -345,9 +354,18 @@ instrument blist opts m = do
             unsafe <- gets (not . Data.Set.member n . safe)
             when (haveBlockMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
-              newMetadata <- if haveStackMetadata
-                             then gets ((! addr) . stackMetadataTable)
-                             else gets ((! addr) . blockMetadataTable)
+              (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
+                                                      then gets ((! addr) . stackMetadataTable)
+                                                      else gets ((! addr) . blockMetadataTable)
+              newMetadata@(basePtr', boundPtr', keyPtr', lockPtr') <- metadataForPointer newPtr
+              base <- load basePtr 0
+              bound <- load boundPtr 0
+              key <- load keyPtr 0
+              lock <- load lockPtr 0
+              store basePtr' 8 base
+              store boundPtr' 8 bound
+              store keyPtr' 8 key
+              store lockPtr' 8 lock
               -- Bitcasting a pointer to the stack doesn't make it not a pointer to the stack
               if haveStackMetadata
               then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
@@ -569,7 +587,7 @@ getFuncName _ = undefined
 
 -- | Generate the instrumentation setup block for a function. Allocate space for metadata of any non-function-type pointer arguments, create
 --   stack slots eagerly for all locally allocated metadata and then branch unconditionally to the first block in the function body.
-emitInstrumentationSetup :: (MonadIRBuilder m, MonadState SBCETSState m) => Global -> m ()
+emitInstrumentationSetup :: (MonadModuleBuilder m, MonadIRBuilder m, MonadState SBCETSState m) => Global -> m ()
 emitInstrumentationSetup f
   | (Function {}) <- f = do
     let firstBlockLabel = (\(BasicBlock n _ _) -> n) $ head $ basicBlocks f
@@ -594,6 +612,7 @@ emitInstrumentationSetup f
       collectMetadataAllocationSites (BasicBlock _ i _) = do
         liftM concat $ mapM examineMetadataAllocationSite i
 
+      -- If an instruction can cause a new pointer to be created, then it can cause new metadata to be allocated
       examineMetadataAllocationSite site
         | (v := o) <- site, (Load _ (LocalReference (PointerType ty _) _) _ _ _) <- o = do
             enable <- gets (CLI.instrumentLoad . options)
@@ -609,6 +628,19 @@ emitInstrumentationSetup f
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
             if enable then return [LocalReference (ptr ty) v] else return []
+        | (v := o) <- site, (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
+            if isFunctionType ty
+            then return []
+            else do
+              ty' <- index (typeOf addr) ixs
+              if isJust ty'
+              then return [LocalReference (ptr $ fromJust ty') v]
+              else return []
+        | (v := o) <- site, (BitCast (LocalReference (PointerType ty' _) _) ty _) <- o = do
+            enable <- gets (CLI.instrumentBitcast . options)
+            if (enable && (not $ isFunctionType ty'))
+            then return [LocalReference ty v]
+            else return []
         | otherwise = return []
 
       createMetadataStackSlots p
