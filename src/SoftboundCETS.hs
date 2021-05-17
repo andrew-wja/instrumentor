@@ -609,14 +609,15 @@ reloadMetadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Oper
 reloadMetadataForPointer addr
   | (LocalReference (PointerType _ _) _) <- addr = do
     allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
-                                            then gets ((! addr) . metadataStorage)
-                                            else error $ "reloadMetadataForPointer: no metadata storage assigned to pointer " ++ (unpack $ ppll addr)
+    newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
+                                                        then gets ((! addr) . metadataStorage)
+                                                        else error $ "reloadMetadataForPointer: no metadata storage assigned to pointer " ++ (unpack $ ppll addr)
     addr' <- bitcast addr (ptr i8)
     (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
     _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
               [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-    return (basePtr, boundPtr, keyPtr, lockPtr)
+    modify $ \s -> s { blockMetadataTable = Data.Map.insert addr newMetadata $ blockMetadataTable s }
+    return newMetadata
   | otherwise = error $ "reloadMetadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
