@@ -125,9 +125,6 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
     __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                            ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
-    *((size_t*)ptr_lock) = 0;
-    *((void**) ptr_lock) = __softboundcets_lock_next_location;
-    __softboundcets_lock_next_location = ptr_lock;
     return;
   } else {
 #if defined(SOFTBOUNDCETS_DEBUG)
