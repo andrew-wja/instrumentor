@@ -362,6 +362,61 @@ instrument blist opts m = do
 
           emitNamedInst i
 
+      | (Select cond tval@(LocalReference (PointerType ty _) tn) fval@(LocalReference _ fn) _) <- o = do
+        emitNamedInst i
+        haveBlockMetadataT <- gets ((Data.Map.member tval) . blockMetadataTable)
+        haveStackMetadataT <- gets ((Data.Map.member tval) . stackMetadataTable)
+        haveBlockMetadataF <- gets ((Data.Map.member fval) . blockMetadataTable)
+        haveStackMetadataF <- gets ((Data.Map.member fval) . stackMetadataTable)
+        let haveMetadata = (haveBlockMetadataT || haveStackMetadataT) && (haveBlockMetadataF || haveStackMetadataF)
+        unsafeT <- gets (not . Data.Set.member tn . safe)
+        unsafeF <- gets (not . Data.Set.member fn . safe)
+
+        when ((not $ isFunctionType ty) && haveMetadata) $ do
+          (tBasePtr, tBoundPtr, tKeyPtr, tLockPtr) <- if haveStackMetadataT
+                                                      then gets ((! tval) . stackMetadataTable)
+                                                      else gets ((! tval) . blockMetadataTable)
+          (fBasePtr, fBoundPtr, fKeyPtr, fLockPtr) <- if haveStackMetadataF
+                                                      then gets ((! fval) . stackMetadataTable)
+                                                      else gets ((! fval) . blockMetadataTable)
+          basePtr <- select cond tBasePtr fBasePtr
+          boundPtr <- select cond tBoundPtr fBoundPtr
+          keyPtr <- select cond tKeyPtr fKeyPtr
+          lockPtr <- select cond tLockPtr fLockPtr
+          let newPtr = LocalReference (ptr ty) v
+          let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
+          if haveStackMetadataT && haveStackMetadataF
+          then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
+          else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+          if not (unsafeT && unsafeF)
+          then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+          else return ()
+          -- The pointer created by select aliases a pointer with assigned metadata storage
+          modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert newPtr newMetadata $ preallocatedMetadataStorage s }
+
+      | (Phi (PointerType ty _) incoming _) <- o = do
+        emitNamedInst i
+        when (not $ isFunctionType ty) $ do
+          incomingBases <- forM incoming (\(op, n) -> do
+                            (base, _, _, _)  <- metadataForPointer op
+                            return (base, n))
+          basePtr <- phi incomingBases
+          incomingBounds <- forM incoming (\(op, n) -> do
+                          (_, bound, _, _)  <- metadataForPointer op
+                          return (bound, n))
+          boundPtr <- phi incomingBounds
+          incomingKeys <- forM incoming (\(op, n) -> do
+                            (_, _, key, _)  <- metadataForPointer op
+                            return (key, n))
+          keyPtr <- phi incomingKeys
+          incomingLocks <- forM incoming (\(op, n) -> do
+                            (_, _, _, lock)  <- metadataForPointer op
+                            return (lock, n))
+          lockPtr <- phi incomingLocks
+          let newPtr = LocalReference (ptr ty) v
+          let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
+          modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+
       | otherwise = emitNamedInst i
 
     instrumentInst i@(Do o)
@@ -538,7 +593,23 @@ metadataForPointer addr
                                               lockPtr <- alloca (ptr i8) Nothing 8
                                               return (basePtr, boundPtr, keyPtr, lockPtr)
     return (basePtr, boundPtr, keyPtr, lockPtr)
+  | (ConstantOperand _) <- addr = gets (fromJust . dontCareMetadata)
   | otherwise = error $ "metadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
+
+-- | Reload the metadata for the given pointer.
+reloadMetadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
+reloadMetadataForPointer addr
+  | (LocalReference (PointerType _ _) _) <- addr = do
+    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
+                                            then gets ((! addr) . preallocatedMetadataStorage)
+                                            else error $ "reloadMetadataForPointer: no metadata storage assigned to pointer " ++ (unpack $ ppll addr)
+    addr' <- bitcast addr (ptr i8)
+    (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
+    _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
+              [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+    return (basePtr, boundPtr, keyPtr, lockPtr)
+  | otherwise = error $ "reloadMetadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
 isLocalReference :: Operand -> Bool
@@ -676,12 +747,13 @@ emitMetadataLoadFromShadowStack p ix
     key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
     (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
     lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
-    (basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer p
+    newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer p
     store basePtr 8 base
     store boundPtr 8 bound
     store keyPtr 8 key
     store lockPtr 8 lock
-    modify $ \s -> s { blockMetadataTable = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ blockMetadataTable s }
+    modify $ \s -> s { stackMetadataTable = Data.Map.insert p newMetadata $ stackMetadataTable s }
+    modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert p newMetadata $ preallocatedMetadataStorage s }
   | otherwise = undefined
 
 -- | Store the metadata for a pointer on the shadow stack at the specified position.
@@ -696,18 +768,8 @@ emitMetadataStoreToShadowStack callee op ix
                                                 then gets ((! op) . stackMetadataTable)
                                                 else gets ((! op) . blockMetadataTable)
                                               else do
-                                                fn <- gets (name . fromJust . current)
-                                                tell ["in function " ++ (unpack $ ppll fn) ++
-                                                      ": no metadata for pointer " ++ (unpack $ ppll op) ++
-                                                      (if isJust callee
-                                                       then " passed to callee " ++
-                                                         (if Data.Set.member (fromJust callee) wrappedFunctions
-                                                          then "(wrapped) " ++ (unpack $ ppll $ fromJust callee)
-                                                          else (unpack $ ppll $ fromJust callee))
-                                                       else " being returned") ++
-                                                      " (storing don't-care metadata to callee shadow stack)"]
-                                                dcMetadata <- gets (fromJust . dontCareMetadata)
-                                                return dcMetadata
+                                                tell ["in function " ++ (unpack $ ppll callee) ++ ": metadata reload for killed pointer " ++ (unpack $ ppll op)]
+                                                reloadMetadataForPointer op
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)

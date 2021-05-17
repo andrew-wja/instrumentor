@@ -11,16 +11,16 @@ clean:
 
 # Simple uninstrumented version of the test program
 test.ll: test.c
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -S -o test.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 -c test.c -emit-llvm -S -o test.ll
 
 test.s: test.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 test.ll -S -o test.s
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 test.ll -S -o test.s
 
 test.dump: test
 	objdump -D test > test.dump
 
 test: test.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 test.ll -o test
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 test.ll -o test
 
 run-test: test
 	./test
@@ -35,7 +35,7 @@ instrumented.ll: test.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor --blacklist $(realpath ../../dist/runtimes/debug/blacklist.SoftboundCETS) --checks --stack --load --store --call --bitcast instrumented.ll
 
 instrumented.s: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.s
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 instrumented.ll -S -o instrumented.s
 
 instrumented.opt.s: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 instrumented.ll -S -o instrumented.opt.s
@@ -44,7 +44,7 @@ instrumented.dump: instrumented
 	objdump -D instrumented > instrumented.dump
 
 instrumented: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../../dist/runtimes/debug) -lSoftBoundCETS_full_rt instrumented.ll -o instrumented
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 -L$(realpath ../../dist/runtimes/debug) -lSoftBoundCETS_full_rt instrumented.ll -o instrumented
 
 run-instrumented: instrumented
 	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./instrumented
@@ -55,7 +55,7 @@ debug-instrumented: instrumented
 
 # Instrumented version of the test program linked with a dummy runtime that does no checking (for debugging purposes)
 dummy-instrumented: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 -L$(realpath ../../dist/runtimes/debug) -lSoftBoundCETS_dummy_rt instrumented.ll -o dummy-instrumented
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O1 -L$(realpath ../../dist/runtimes/debug) -lSoftBoundCETS_dummy_rt instrumented.ll -o dummy-instrumented
 
 run-dummy-instrumented: dummy-instrumented
 	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./dummy-instrumented
