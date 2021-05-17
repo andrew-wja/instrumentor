@@ -410,7 +410,7 @@ instrument blist opts m = do
                             (base, _, _, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if isZeroInitializer op
+                              else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (base, n))
@@ -419,7 +419,7 @@ instrument blist opts m = do
                           (_, bound, _, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if isZeroInitializer op
+                              else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                           return (bound, n))
@@ -428,7 +428,7 @@ instrument blist opts m = do
                             (_, _, key, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if isZeroInitializer op
+                              else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (key, n))
@@ -437,7 +437,7 @@ instrument blist opts m = do
                             (_, _, _, lock)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if isZeroInitializer op
+                              else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (lock, n))
@@ -620,6 +620,11 @@ loadMetadataForAddress addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
   | otherwise = error $ "loadMetadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
+isUndef :: Operand -> Bool
+isUndef (ConstantOperand (Const.Undef _)) = True
+isUndef _ = False
+
+-- | Helper predicate.
 isZeroInitializer :: Operand -> Bool
 isZeroInitializer (ConstantOperand (Const.Null _)) = True
 isZeroInitializer _ = False
@@ -725,6 +730,7 @@ emitInstrumentationSetup f
             lockPtr <- alloca (ptr i8) Nothing 8
             modify $ \s -> s { metadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ metadataStorage s }
         | (ConstantOperand (Const.Null (PointerType {}))) <- p = return ()
+        | (ConstantOperand (Const.Undef (PointerType {}))) <- p = return ()
         | otherwise  = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll p)
 
 -- | Create a local key and lock for entities allocated on the stack inside the current function
@@ -833,6 +839,26 @@ emitMetadataStoreToShadowStack callee op ix
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
                 [(lock, []), (ix', [])]
       return ()
+  | isUndef op || isZeroInitializer op = do
+      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . nullMetadata)
+      ix' <- pure $ int32 ix
+      base <- load basePtr 0
+      bound <- load boundPtr 0
+      key <- load keyPtr 0
+      lock <- load lockPtr 0
+      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
+                [(base, []), (ix', [])]
+      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
+                [(bound, []), (ix', [])]
+      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
+                [(key, []), (ix', [])]
+      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
+                [(lock, []), (ix', [])]
+      return ()
   | otherwise = undefined
 
 -- | Index into a type with a list of consecutive 'Operand' indices.
@@ -842,7 +868,7 @@ index ty [] = pure $ Just ty
 index (PointerType ty _) (_:is') = index ty is'
 index (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
   index (head $ drop (fromIntegral val) elTys) is'
-index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ show i
+index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
 index (VectorType _ elTy) (_:is') = index elTy is'
 index (ArrayType _ elTy) (_:is') = index elTy is'
 index (NamedTypeReference nm) is' = do
@@ -850,4 +876,4 @@ index (NamedTypeReference nm) is' = do
   case mayTy of
     Nothing -> pure Nothing
     Just ty -> index ty is'
-index t (_:_) = error $ "Can't index into type: " ++ show t
+index t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
