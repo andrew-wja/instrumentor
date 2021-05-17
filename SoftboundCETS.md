@@ -61,16 +61,28 @@ instruction selection time.
 It is helpful to categorize LLVM instructions into two classes: those which can
 cause metadata to be allocated in local variables, and those which cannot.
 There are very few situations which can require local metadata variables to be
-allocated. Loading a pointer from memory requires local metadata variables to
+allocated.
+
+1. Loading a pointer from memory requires local metadata variables to
 be allocated for the `base`, `bound`, `key`, and `lock` for that pointer, which
-are retrieved from the runtime. Calling a function which returns a pointer
+are retrieved from the runtime.
+
+2. Calling a function which returns a pointer
 requires local metadata variables to be allocated to hold the metadata for that
-pointer, which is popped from the shadow stack. Calling a function which takes
+pointer, which is popped from the shadow stack.
+
+3. Calling a function which takes
 pointer arguments requires the metadata for those pointer arguments to be in
 local variables at the call site, so that the metadata can be pushed onto the
-shadow stack. Finally, allocation of data on the stack with the `alloca`
+shadow stack.
+
+4. Allocation of data on the stack with the `alloca`
 instruction causes local metadata variables for that allocation (which in LLVM
 is explictly held by reference to its address) to be created.
+
+5. Incoming values to a `phi` instruction must have their metadata available in
+local variables in order for `phi` nodes to be generated to select the correct
+metadata at runtime.
 
 All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.
