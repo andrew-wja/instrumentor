@@ -52,7 +52,11 @@ However, there is also a fourth "space" where metadata lives: in local
 variables while it is being used to perform checks. While the three disjoint
 metadata spaces are managed by the runtime, the fourth "space" is managed
 entirely by the compiler at instrumentation-time. This aspect is not discussed
-in much detail in the original papers.
+in much detail in the original papers. In particular, to get good performance,
+it is desirable to prevent metadata from being read from and written to memory
+as much as possible. This implies aggressive caching of metadata values in
+local variables, which the compiler can then promote to registers at
+instruction selection time.
 
 It is helpful to categorize LLVM instructions into two classes: those which can
 cause metadata to be allocated in local variables, and those which cannot.
