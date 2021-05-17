@@ -246,7 +246,7 @@ instrument blist opts m = do
           intBase <- ptrtoint base i64
           intBound <- add allocSize intBase
           bound <- inttoptr intBound (ptr i8)
-          (basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer resultPtr
+          (basePtr, boundPtr, keyPtr, lockPtr) <- getOrCreateMetadataStorage resultPtr
           store basePtr 8 base
           store boundPtr 8 bound
           functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
@@ -255,7 +255,7 @@ instrument blist opts m = do
           functionLock <- load functionLockPtr 0
           store keyPtr 8 functionKey
           store lockPtr 8 functionLock
-          modify $ \s -> s { stackMetadataTable = Data.Map.insert (LocalReference (ptr ty) v) (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
+          modify $ \s -> s { stackMetadataTable = Data.Map.insert resultPtr (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
 
       | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)
@@ -290,7 +290,8 @@ instrument blist opts m = do
           let loadedValueIsPointer = isPointerType ty
           when loadedValueIsPointer $ do
             let loadedPtr = LocalReference ty v
-            loadedPtrMetadata <- metadataForAddress addr
+            loadedPtrMetadata <- getOrCreateMetadataStorage loadedPtr
+            _ <- loadMetadataForAddress addr loadedPtrMetadata
             modify $ \s -> s { blockMetadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ blockMetadataTable s }
 
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
@@ -403,19 +404,31 @@ instrument blist opts m = do
         emitNamedInst i
         when (not $ isFunctionType ty) $ do
           incomingBases <- forM incoming (\(op, n) -> do
-                            (base, _, _, _)  <- gets ((! op) . metadataStorage)
+                            (base, _, _, _)  <- do
+                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                              if allocated then gets ((! op) . metadataStorage)
+                              else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (base, n))
           basePtr <- phi incomingBases
           incomingBounds <- forM incoming (\(op, n) -> do
-                          (_, bound, _, _)  <- gets ((! op) . metadataStorage)
+                          (_, bound, _, _)  <- do
+                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                              if allocated then gets ((! op) . metadataStorage)
+                              else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                           return (bound, n))
           boundPtr <- phi incomingBounds
           incomingKeys <- forM incoming (\(op, n) -> do
-                            (_, _, key, _)  <- gets ((! op) . metadataStorage)
+                            (_, _, key, _)  <- do
+                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                              if allocated then gets ((! op) . metadataStorage)
+                              else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (key, n))
           keyPtr <- phi incomingKeys
           incomingLocks <- forM incoming (\(op, n) -> do
-                            (_, _, _, lock)  <- gets ((! op) . metadataStorage)
+                            (_, _, _, lock)  <- do
+                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                              if allocated then gets ((! op) . metadataStorage)
+                              else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (lock, n))
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
@@ -561,19 +574,27 @@ instrument blist opts m = do
     emitNamedInst (Do i) = do
       emitInstrVoid i
 
--- | Look up or create (allocate on the stack) the metadata for the pointed-to pointer.
-metadataForAddress :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
-metadataForAddress addr
+-- | Allocate (or return if already allocated) local variables to hold the metadata for the given pointer.
+getOrCreateMetadataStorage :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
+getOrCreateMetadataStorage pointer
+  | (LocalReference (PointerType _ _) _) <- pointer = do
+    allocated <- gets ((Data.Map.lookup pointer) . metadataStorage)
+    meta <- if isJust allocated
+            then gets ((! pointer) . metadataStorage)
+            else do
+              basePtr <- alloca (ptr i8) Nothing 8
+              boundPtr <- alloca (ptr i8) Nothing 8
+              keyPtr <- alloca (i64) Nothing 8
+              lockPtr <- alloca (ptr i8) Nothing 8
+              return (basePtr, boundPtr, keyPtr, lockPtr)
+    modify $ \s -> s { metadataStorage = Data.Map.insert pointer meta $ metadataStorage s }
+    return meta
+  | otherwise = error $ "getOrCreateMetadataStorage: expected pointer but saw " ++ (unpack $ ppll pointer)
+
+-- | Load the metadata for the given address.
+loadMetadataForAddress :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Metadata -> m Metadata
+loadMetadataForAddress addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
   | (LocalReference (PointerType _ _) _) <- addr = do
-    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
-                                            then gets ((! addr) . metadataStorage)
-                                            else do
-                                              basePtr <- alloca (ptr i8) Nothing 8
-                                              boundPtr <- alloca (ptr i8) Nothing 8
-                                              keyPtr <- alloca (i64) Nothing 8
-                                              lockPtr <- alloca (ptr i8) Nothing 8
-                                              return (basePtr, boundPtr, keyPtr, lockPtr)
     addr' <- bitcast addr (ptr i8)
     (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
     _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
@@ -584,37 +605,8 @@ metadataForAddress addr
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
                 [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
       return ()
-    return (basePtr, boundPtr, keyPtr, lockPtr)
-  | otherwise = error $ "metadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
-
--- | Look up or create (allocate on the stack) the metadata for the given pointer.
-metadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
-metadataForPointer addr
-  | (LocalReference (PointerType _ _) _) <- addr = do
-    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
-                                            then gets ((! addr) . metadataStorage)
-                                            else do
-                                              basePtr <- alloca (ptr i8) Nothing 8
-                                              boundPtr <- alloca (ptr i8) Nothing 8
-                                              keyPtr <- alloca (i64) Nothing 8
-                                              lockPtr <- alloca (ptr i8) Nothing 8
-                                              return (basePtr, boundPtr, keyPtr, lockPtr)
-    return (basePtr, boundPtr, keyPtr, lockPtr)
-  | (ConstantOperand _) <- addr = gets (fromJust . dontCareMetadata)
-  | otherwise = error $ "metadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
-
--- | Load the metadata for the given pointer.
-loadMetadata :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Metadata -> m Metadata
-loadMetadata addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
-  | (LocalReference (PointerType _ _) _) <- addr = do
-    addr' <- bitcast addr (ptr i8)
-    (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-    _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-              [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-    modify $ \s -> s { blockMetadataTable = Data.Map.insert addr meta $ blockMetadataTable s }
     return meta
-  | otherwise = error $ "loadMetadata: expected pointer but saw " ++ (unpack $ ppll addr)
+  | otherwise = error $ "loadMetadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
 isLocalReference :: Operand -> Bool
@@ -658,7 +650,8 @@ emitInstrumentationSetup f
     zipWithM_ emitMetadataLoadFromShadowStack pointerArgs shadowStackIndices
     -- Create the don't-care metadata.
     nullPtr <- inttoptr (int64 0) (ptr i8)
-    dcMetadata <- metadataForAddress nullPtr
+    dcMetadata <- getOrCreateMetadataStorage nullPtr
+    _ <- loadMetadataForAddress nullPtr dcMetadata
     modify $ \s -> s { dontCareMetadata = Just dcMetadata }
     metadataAllocationSites <- liftM (nub . sort . concat) $ mapM collectMetadataAllocationSites $ basicBlocks f
     mapM_ createMetadataStackSlots metadataAllocationSites
@@ -675,10 +668,10 @@ emitInstrumentationSetup f
 
       -- If an instruction can cause a new pointer to be created, then it can cause new metadata to be allocated
       examineMetadataAllocationSite site
-        | (v := o) <- site, (Load _ (LocalReference (PointerType ty _) _) _ _ _) <- o = do
+        | (v := o) <- site, (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
             enable <- gets (CLI.instrumentLoad . options)
             if (enable && (not $ isFunctionType ty) && isPointerType ty)
-            then return [LocalReference ty v]
+            then return [addr, LocalReference ty v]
             else return []
         | (v := o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) opds _ _) <- o = do
             enable <- gets (CLI.instrumentCall . options)
@@ -756,13 +749,12 @@ emitMetadataLoadFromShadowStack p ix
     key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
     (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
     lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
-    newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- metadataForPointer p
+    newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- getOrCreateMetadataStorage p
     store basePtr 8 base
     store boundPtr 8 bound
     store keyPtr 8 key
     store lockPtr 8 lock
     modify $ \s -> s { stackMetadataTable = Data.Map.insert p newMetadata $ stackMetadataTable s }
-    modify $ \s -> s { metadataStorage = Data.Map.insert p newMetadata $ metadataStorage s }
   | otherwise = undefined
 
 -- | Store the metadata for a pointer on the shadow stack at the specified position.
@@ -781,12 +773,12 @@ emitMetadataStoreToShadowStack callee op ix
                                                 isAllocated <- gets ((Data.Map.member op) . metadataStorage)
                                                 if isAllocated
                                                 then do
-                                                  newMetadata <- gets ((! op) . metadataStorage)
-                                                  loadMetadata op newMetadata
+                                                  newMetadata <- getOrCreateMetadataStorage op
+                                                  loadMetadataForAddress op newMetadata
                                                 else do
                                                   tell ["in function " ++ (unpack $ ppll callee) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)]
-                                                  newMetadata <- metadataForPointer op
-                                                  loadMetadata op newMetadata
+                                                  newMetadata <- getOrCreateMetadataStorage op
+                                                  loadMetadataForAddress op newMetadata
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
