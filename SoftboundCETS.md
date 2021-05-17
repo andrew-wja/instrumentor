@@ -51,7 +51,7 @@ and the general metadata space for allocations.
 However, there is also a fourth "space" where metadata lives: in local
 variables while it is being used to perform checks. While the three disjoint
 metadata spaces are managed by the runtime, the fourth "space" is managed
-entirely by the compiler at instrumentation-time. This aspect is not discussed
+entirely by the compiler at instrumentation time. This aspect is not discussed
 in much detail in the original papers. In particular, to get good performance,
 it is desirable to prevent metadata from being read from and written to memory
 as much as possible. This implies aggressive caching of metadata values in
@@ -76,5 +76,5 @@ All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.
 For example, if a pointer is `bitcast` to a different type, both pointers share
 the same local metadata variables. The most complex of these are the `select`
-and `phi` instructions, which cause aliasing at runtime that is opaque to the
-compiler.
+and `phi` instructions, which cause aliasing at runtime that is potentially
+opaque to the compiler.

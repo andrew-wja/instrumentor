@@ -778,8 +778,15 @@ emitMetadataStoreToShadowStack callee op ix
                                                 else gets ((! op) . blockMetadataTable)
                                               else do
                                                 tell ["in function " ++ (unpack $ ppll callee) ++ ": metadata reload for killed pointer " ++ (unpack $ ppll op)]
-                                                newMetadata <- gets ((! op) . metadataStorage)
-                                                loadMetadata op newMetadata
+                                                isAllocated <- gets ((Data.Map.member op) . metadataStorage)
+                                                if isAllocated
+                                                then do
+                                                  newMetadata <- gets ((! op) . metadataStorage)
+                                                  loadMetadata op newMetadata
+                                                else do
+                                                  tell ["in function " ++ (unpack $ ppll callee) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)]
+                                                  newMetadata <- metadataForPointer op
+                                                  loadMetadata op newMetadata
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
