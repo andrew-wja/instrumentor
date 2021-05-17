@@ -74,7 +74,7 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                , dontCareMetadata :: Maybe Metadata
                                -- ^ Metadata that can never cause any runtime checks to fail.
-                               , preallocatedMetadataStorage :: Map Operand Metadata
+                               , metadataStorage :: Map Operand Metadata
                                -- ^ Pre-allocated stack slots to hold the metadata for each pointer requiring a runtime metadata load
                                }
 
@@ -209,7 +209,7 @@ instrument blist opts m = do
                             , blockMetadataTable = Data.Map.empty
                             , stackMetadataTable = Data.Map.empty
                             , dontCareMetadata = Nothing
-                            , preallocatedMetadataStorage = Data.Map.empty
+                            , metadataStorage = Data.Map.empty
                             }
             emitInstrumentationSetup f
             instrumentBlocks $ basicBlocks f
@@ -312,7 +312,8 @@ instrument blist opts m = do
               -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
               modify $ \s -> s { blockMetadataTable = foldr ($) (blockMetadataTable s) $ map Data.Map.delete ptrArgs }
               -- Read the pointer metadata for the return value if it is a pointer
-              when (isPointerType rt) $ emitMetadataLoadFromShadowStack (LocalReference rt v) 0
+              when (isPointerType rt) $ do
+                emitMetadataLoadFromShadowStack (LocalReference rt v) 0
               emitShadowStackDeallocation
             (UnName {}) -> do -- Calling a computed function pointer
               emitNamedInst i
@@ -337,6 +338,8 @@ instrument blist opts m = do
               if not unsafe
               then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
               else return ()
+              -- The pointer created by getelementptr aliases a pointer with allocated metadata storage
+              modify $ \s -> s { metadataStorage = Data.Map.insert newPtr oldMetadata $ metadataStorage s }
         emitNamedInst i
 
       | (BitCast addr@(LocalReference (PointerType ty' _) n) ty _) <- o = do
@@ -359,6 +362,8 @@ instrument blist opts m = do
               if not unsafe
               then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
               else return ()
+              -- The pointer created by bitcast aliases a pointer with allocated metadata storage
+              modify $ \s -> s { metadataStorage = Data.Map.insert newPtr oldMetadata $ metadataStorage s }
 
           emitNamedInst i
 
@@ -391,8 +396,8 @@ instrument blist opts m = do
           if not (unsafeT && unsafeF)
           then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
           else return ()
-          -- The pointer created by select aliases a pointer with assigned metadata storage
-          modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert newPtr newMetadata $ preallocatedMetadataStorage s }
+          -- The pointer created by select aliases a pointer with allocated metadata storage
+          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMetadata $ metadataStorage s }
 
       | (Phi (PointerType ty _) incoming _) <- o = do
         emitNamedInst i
@@ -417,8 +422,8 @@ instrument blist opts m = do
           let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
           -- The pointer created by phi is only assumed valid within the current basic block
           modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
-          -- The pointer created by phi aliases a pointer with assigned metadata storage
-          modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert newPtr newMetadata $ preallocatedMetadataStorage s }
+          -- The pointer created by phi aliases a pointer with allocated metadata storage
+          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMetadata $ metadataStorage s }
 
       | otherwise = emitNamedInst i
 
@@ -560,9 +565,9 @@ instrument blist opts m = do
 metadataForAddress :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
 metadataForAddress addr
   | (LocalReference (PointerType _ _) _) <- addr = do
-    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
-                                            then gets ((! addr) . preallocatedMetadataStorage)
+    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
+                                            then gets ((! addr) . metadataStorage)
                                             else do
                                               basePtr <- alloca (ptr i8) Nothing 8
                                               boundPtr <- alloca (ptr i8) Nothing 8
@@ -586,9 +591,9 @@ metadataForAddress addr
 metadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
 metadataForPointer addr
   | (LocalReference (PointerType _ _) _) <- addr = do
-    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
-                                            then gets ((! addr) . preallocatedMetadataStorage)
+    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
+                                            then gets ((! addr) . metadataStorage)
                                             else do
                                               basePtr <- alloca (ptr i8) Nothing 8
                                               boundPtr <- alloca (ptr i8) Nothing 8
@@ -603,9 +608,9 @@ metadataForPointer addr
 reloadMetadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
 reloadMetadataForPointer addr
   | (LocalReference (PointerType _ _) _) <- addr = do
-    preallocated <- gets ((Data.Map.lookup addr) . preallocatedMetadataStorage)
-    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust preallocated
-                                            then gets ((! addr) . preallocatedMetadataStorage)
+    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
+    (basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
+                                            then gets ((! addr) . metadataStorage)
                                             else error $ "reloadMetadataForPointer: no metadata storage assigned to pointer " ++ (unpack $ ppll addr)
     addr' <- bitcast addr (ptr i8)
     (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
@@ -695,7 +700,7 @@ emitInstrumentationSetup f
             boundPtr <- alloca (ptr i8) Nothing 8
             keyPtr <- alloca (i64) Nothing 8
             lockPtr <- alloca (ptr i8) Nothing 8
-            modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ preallocatedMetadataStorage s }
+            modify $ \s -> s { metadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ metadataStorage s }
         | otherwise  = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll p)
 
 -- | Create a local key and lock for entities allocated on the stack inside the current function
@@ -756,7 +761,7 @@ emitMetadataLoadFromShadowStack p ix
     store keyPtr 8 key
     store lockPtr 8 lock
     modify $ \s -> s { stackMetadataTable = Data.Map.insert p newMetadata $ stackMetadataTable s }
-    modify $ \s -> s { preallocatedMetadataStorage = Data.Map.insert p newMetadata $ preallocatedMetadataStorage s }
+    modify $ \s -> s { metadataStorage = Data.Map.insert p newMetadata $ metadataStorage s }
   | otherwise = undefined
 
 -- | Store the metadata for a pointer on the shadow stack at the specified position.
