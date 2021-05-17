@@ -403,19 +403,19 @@ instrument blist opts m = do
         emitNamedInst i
         when (not $ isFunctionType ty) $ do
           incomingBases <- forM incoming (\(op, n) -> do
-                            (base, _, _, _)  <- metadataForPointer op
+                            (base, _, _, _)  <- gets ((! op) . metadataStorage)
                             return (base, n))
           basePtr <- phi incomingBases
           incomingBounds <- forM incoming (\(op, n) -> do
-                          (_, bound, _, _)  <- metadataForPointer op
+                          (_, bound, _, _)  <- gets ((! op) . metadataStorage)
                           return (bound, n))
           boundPtr <- phi incomingBounds
           incomingKeys <- forM incoming (\(op, n) -> do
-                            (_, _, key, _)  <- metadataForPointer op
+                            (_, _, key, _)  <- gets ((! op) . metadataStorage)
                             return (key, n))
           keyPtr <- phi incomingKeys
           incomingLocks <- forM incoming (\(op, n) -> do
-                            (_, _, _, lock)  <- metadataForPointer op
+                            (_, _, _, lock)  <- gets ((! op) . metadataStorage)
                             return (lock, n))
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
