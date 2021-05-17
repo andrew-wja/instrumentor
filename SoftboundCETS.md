@@ -43,7 +43,7 @@ back to the caller on the shadow stack.
 
 ## How SoftboundCETS Works In Practice
 
-There are three disjoin metadata spaces: the metadata space for function
+There are three disjoint metadata spaces: the metadata space for function
 arguments, the metadata space for stack allocations, and the metadata
 space for heap allocations.
 
@@ -53,17 +53,17 @@ metadata spaces are managed by the runtime, the fourth "space" is managed
 entirely by the compiler at instrumentation-time. This aspect is not discussed
 in much detail in the original papers.
 
-It is helpful to categorize LLVM instructions into two
-classes: those which can cause metadata to be allocated in local variables, and
-those which cannot. There are very few situations which can require local
-metadata variables to be allocated. Loading a pointer from memory requires
-local metadata variables to be allocated for the `base`, `bound`, `key`, and
-`lock` for that pointer, which are retrieved from the runtime. Calling a
-function which returns a pointer requires local metadata variables to be
-allocated to hold the metadata for that pointer, which is popped from the
-shadow stack. Finally, allocation of a pointer variable on the stack with the
-`alloca` instruction causes local metadata variables for that allocation to be
-created.
+It is helpful to categorize LLVM instructions into two classes: those which can
+cause metadata to be allocated in local variables, and those which cannot.
+There are very few situations which can require local metadata variables to be
+allocated. Loading a pointer from memory requires local metadata variables to
+be allocated for the `base`, `bound`, `key`, and `lock` for that pointer, which
+are retrieved from the runtime. Calling a function which returns a pointer
+requires local metadata variables to be allocated to hold the metadata for that
+pointer, which is popped from the shadow stack. Finally, allocation of data on
+the stack with the `alloca` instruction causes local metadata variables for
+that allocation (which in LLVM is explictly held by reference to its address)
+to be created.
 
 All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.
