@@ -33,7 +33,8 @@ If the address of a stack allocated local variable escapes, a key mismatch
 will be detected whenever it is used.
 
 Global variables are assigned the reserved key value `1` and a global `lock` is
-allocated for them in the runtime.
+allocated for them in the runtime. It is an error to attempt to deallocate any
+entity with the key value `1`; these entities are allocated by the linker.
 
 When pointers are passed to or returned from functions, their associated
 metadata is placed on a "shadow stack", residing in another disjoint metadata
