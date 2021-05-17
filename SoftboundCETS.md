@@ -65,10 +65,12 @@ allocated. Loading a pointer from memory requires local metadata variables to
 be allocated for the `base`, `bound`, `key`, and `lock` for that pointer, which
 are retrieved from the runtime. Calling a function which returns a pointer
 requires local metadata variables to be allocated to hold the metadata for that
-pointer, which is popped from the shadow stack. Finally, allocation of data on
-the stack with the `alloca` instruction causes local metadata variables for
-that allocation (which in LLVM is explictly held by reference to its address)
-to be created.
+pointer, which is popped from the shadow stack. Calling a function which takes
+pointer arguments requires the metadata for those pointer arguments to be in
+local variables at the call site, so that the metadata can be pushed onto the
+shadow stack. Finally, allocation of data on the stack with the `alloca`
+instruction causes local metadata variables for that allocation (which in LLVM
+is explictly held by reference to its address) to be created.
 
 All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.

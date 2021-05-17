@@ -604,21 +604,17 @@ metadataForPointer addr
   | (ConstantOperand _) <- addr = gets (fromJust . dontCareMetadata)
   | otherwise = error $ "metadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
 
--- | Reload the metadata for the given pointer.
-reloadMetadataForPointer :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
-reloadMetadataForPointer addr
+-- | Load the metadata for the given pointer.
+loadMetadata :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Metadata -> m Metadata
+loadMetadata addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
   | (LocalReference (PointerType _ _) _) <- addr = do
-    allocated <- gets ((Data.Map.lookup addr) . metadataStorage)
-    newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- if isJust allocated
-                                                        then gets ((! addr) . metadataStorage)
-                                                        else error $ "reloadMetadataForPointer: no metadata storage assigned to pointer " ++ (unpack $ ppll addr)
     addr' <- bitcast addr (ptr i8)
     (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
     _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
               [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
-    modify $ \s -> s { blockMetadataTable = Data.Map.insert addr newMetadata $ blockMetadataTable s }
-    return newMetadata
-  | otherwise = error $ "reloadMetadataForPointer: expected pointer but saw " ++ (unpack $ ppll addr)
+    modify $ \s -> s { blockMetadataTable = Data.Map.insert addr meta $ blockMetadataTable s }
+    return meta
+  | otherwise = error $ "loadMetadata: expected pointer but saw " ++ (unpack $ ppll addr)
 
 -- | Helper predicate.
 isLocalReference :: Operand -> Bool
@@ -684,11 +680,15 @@ emitInstrumentationSetup f
             if (enable && (not $ isFunctionType ty) && isPointerType ty)
             then return [LocalReference ty v]
             else return []
-        | (v := o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) _ _ _) <- o = do
+        | (v := o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) opds _ _) <- o = do
             enable <- gets (CLI.instrumentCall . options)
             bl <- gets blacklist
-            if (enable && (not $ ignore bl fname) && isPointerType rt)
-            then return [LocalReference rt v]
+            if (enable && (not $ ignore bl fname))
+            then do
+              let ptrArgs = filter (not . isFunctionType . pointerReferent . typeOf) $
+                            filter isPointerOperand $ map fst opds
+              let ptrRet = if (isPointerType rt) then [LocalReference rt v] else []
+              return (ptrArgs ++ ptrRet)
             else return []
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
@@ -778,7 +778,8 @@ emitMetadataStoreToShadowStack callee op ix
                                                 else gets ((! op) . blockMetadataTable)
                                               else do
                                                 tell ["in function " ++ (unpack $ ppll callee) ++ ": metadata reload for killed pointer " ++ (unpack $ ppll op)]
-                                                reloadMetadataForPointer op
+                                                newMetadata <- gets ((! op) . metadataStorage)
+                                                loadMetadata op newMetadata
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
