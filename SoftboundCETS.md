@@ -45,8 +45,8 @@ back to the caller on the shadow stack.
 ## How SoftboundCETS Works In Practice
 
 There are three disjoint metadata spaces: the metadata space for function
-arguments, the metadata space for stack allocations, and the metadata
-space for heap allocations.
+arguments (aka "shadow stack"), the metadata space for stack frame keys,
+and the general metadata space for allocations.
 
 However, there is also a fourth "space" where metadata lives: in local
 variables while it is being used to perform checks. While the three disjoint
