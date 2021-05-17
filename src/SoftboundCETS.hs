@@ -729,7 +729,7 @@ emitInstrumentationSetup f
               return (ptrArgs ++ ptrRet)
             else return []
         | (_ := o) <- site, (Phi (PointerType {}) incoming _) <- o = do
-            return $ map fst $ filter (isLocalReference . fst) incoming
+            return $ map fst incoming
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
             if enable then return [LocalReference (ptr ty) v] else return []
@@ -833,46 +833,6 @@ emitMetadataStoreToShadowStack callee op ix
         _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
                   [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
         return ()
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                [(base, []), (ix', [])]
-      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                [(bound, []), (ix', [])]
-      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
-                [(key, []), (ix', [])]
-      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                [(lock, []), (ix', [])]
-      return ()
-  | isUndef op || isZeroInitializer op = do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . nullMetadata)
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                [(base, []), (ix', [])]
-      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                [(bound, []), (ix', [])]
-      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
-                [(key, []), (ix', [])]
-      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                [(lock, []), (ix', [])]
-      return ()
-  | (ConstantOperand _) <- op = do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . dontCareMetadata)
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
