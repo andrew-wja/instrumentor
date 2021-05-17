@@ -22,7 +22,7 @@ import Data.Maybe (isJust, fromJust)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, nub, sort)
 import LLVM.AST hiding (index, Metadata)
-import LLVM.AST.Global
+import LLVM.AST.Global hiding (isConstant)
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
 import qualified LLVM.AST.Constant as Const
@@ -412,7 +412,9 @@ instrument blist opts m = do
                               if allocated then gets ((! op) . metadataStorage)
                               else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                                   else if (isConstant op)
+                                        then gets (fromJust . dontCareMetadata)
+                                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (base, n))
           basePtr <- phi incomingBases
           incomingBounds <- forM incoming (\(op, n) -> do
@@ -421,7 +423,9 @@ instrument blist opts m = do
                               if allocated then gets ((! op) . metadataStorage)
                               else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                                   else if (isConstant op)
+                                        then gets (fromJust . dontCareMetadata)
+                                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                           return (bound, n))
           boundPtr <- phi incomingBounds
           incomingKeys <- forM incoming (\(op, n) -> do
@@ -430,7 +434,9 @@ instrument blist opts m = do
                               if allocated then gets ((! op) . metadataStorage)
                               else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                                   else if (isConstant op)
+                                        then gets (fromJust . dontCareMetadata)
+                                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (key, n))
           keyPtr <- phi incomingKeys
           incomingLocks <- forM incoming (\(op, n) -> do
@@ -439,7 +445,9 @@ instrument blist opts m = do
                               if allocated then gets ((! op) . metadataStorage)
                               else if (isZeroInitializer op || isUndef op)
                                    then gets (fromJust . nullMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                                   else if (isConstant op)
+                                        then gets (fromJust . dontCareMetadata)
+                                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (lock, n))
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
@@ -635,6 +643,11 @@ isLocalReference (LocalReference {}) = True
 isLocalReference _ = False
 
 -- | Helper predicate.
+isConstant :: Operand -> Bool
+isConstant (ConstantOperand {}) = True
+isConstant _ = False
+
+-- | Helper predicate.
 isPointerOperand :: Operand -> Bool
 isPointerOperand (LocalReference (PointerType {}) _) = True
 isPointerOperand _ = False
@@ -729,9 +742,8 @@ emitInstrumentationSetup f
             keyPtr <- alloca (i64) Nothing 8
             lockPtr <- alloca (ptr i8) Nothing 8
             modify $ \s -> s { metadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ metadataStorage s }
-        | (ConstantOperand (Const.Null (PointerType {}))) <- p = return ()
-        | (ConstantOperand (Const.Undef (PointerType {}))) <- p = return ()
-        | otherwise  = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll p)
+        | (ConstantOperand _) <- p = return ()
+        | otherwise  = error $ "createMetadataStackSlots: expecting a pointer or pointer constant but saw " ++ (unpack $ ppll p)
 
 -- | Create a local key and lock for entities allocated on the stack inside the current function
 emitLocalKeyAndLockCreation :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSState ModuleBuilder)) ()
@@ -841,6 +853,26 @@ emitMetadataStoreToShadowStack callee op ix
       return ()
   | isUndef op || isZeroInitializer op = do
       (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . nullMetadata)
+      ix' <- pure $ int32 ix
+      base <- load basePtr 0
+      bound <- load boundPtr 0
+      key <- load keyPtr 0
+      lock <- load lockPtr 0
+      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
+                [(base, []), (ix', [])]
+      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
+                [(bound, []), (ix', [])]
+      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
+                [(key, []), (ix', [])]
+      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
+      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
+                [(lock, []), (ix', [])]
+      return ()
+  | (ConstantOperand _) <- op = do
+      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . dontCareMetadata)
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
