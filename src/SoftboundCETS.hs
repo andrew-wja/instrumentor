@@ -683,6 +683,8 @@ emitInstrumentationSetup f
               let ptrRet = if (isPointerType rt) then [LocalReference rt v] else []
               return (ptrArgs ++ ptrRet)
             else return []
+        | (_ := o) <- site, (Phi (PointerType {}) incoming _) <- o = do
+            return $ map fst incoming
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
             if enable then return [LocalReference (ptr ty) v] else return []
