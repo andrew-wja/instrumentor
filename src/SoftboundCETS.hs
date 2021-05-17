@@ -317,30 +317,26 @@ instrument blist opts m = do
             (UnName {}) -> do -- Calling a computed function pointer
               emitNamedInst i
 
-      | (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
+      | (GetElementPtr _ addr@(LocalReference (PointerType ty _) n) ixs _) <- o = do
         when (not $ isFunctionType ty) $ do
           haveBlockMetadata <- gets ((Data.Map.member addr) . blockMetadataTable)
           haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
+          unsafe <- gets (not . Data.Set.member n . safe)
           when (haveBlockMetadata || haveStackMetadata) $ do
             ty' <- index (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
             when (isJust ty') $ do
               let newPtr = LocalReference (ptr $ fromJust ty') v
-              (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
-                                                      then gets ((! addr) . stackMetadataTable)
-                                                      else gets ((! addr) . blockMetadataTable)
-              newMetadata@(basePtr', boundPtr', keyPtr', lockPtr') <- metadataForPointer newPtr
-              base <- load basePtr 0
-              bound <- load boundPtr 0
-              key <- load keyPtr 0
-              lock <- load lockPtr 0
-              store basePtr' 8 base
-              store boundPtr' 8 bound
-              store keyPtr' 8 key
-              store lockPtr' 8 lock
-              -- We might get a pointer back from getelementptr that does not point to the stack
-              modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+              oldMetadata <- if haveStackMetadata
+                             then gets ((! addr) . stackMetadataTable)
+                             else gets ((! addr) . blockMetadataTable)
+              if haveStackMetadata
+              then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr oldMetadata $ stackMetadataTable s }
+              else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr oldMetadata $ blockMetadataTable s }
+              if not unsafe
+              then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+              else return ()
         emitNamedInst i
 
       | (BitCast addr@(LocalReference (PointerType ty' _) n) ty _) <- o = do
@@ -354,23 +350,12 @@ instrument blist opts m = do
             unsafe <- gets (not . Data.Set.member n . safe)
             when (haveBlockMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
-              (basePtr, boundPtr, keyPtr, lockPtr) <- if haveStackMetadata
-                                                      then gets ((! addr) . stackMetadataTable)
-                                                      else gets ((! addr) . blockMetadataTable)
-              newMetadata@(basePtr', boundPtr', keyPtr', lockPtr') <- metadataForPointer newPtr
-              base <- load basePtr 0
-              bound <- load boundPtr 0
-              key <- load keyPtr 0
-              lock <- load lockPtr 0
-              store basePtr' 8 base
-              store boundPtr' 8 bound
-              store keyPtr' 8 key
-              store lockPtr' 8 lock
-              -- Bitcasting a pointer to the stack doesn't make it not a pointer to the stack
+              oldMetadata <- if haveStackMetadata
+                             then gets ((! addr) . stackMetadataTable)
+                             else gets ((! addr) . blockMetadataTable)
               if haveStackMetadata
-              then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
-              else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
-              -- Bitcasting a safe pointer doesn't make it unsafe
+              then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr oldMetadata $ stackMetadataTable s }
+              else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr oldMetadata $ blockMetadataTable s }
               if not unsafe
               then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
               else return ()
@@ -628,19 +613,6 @@ emitInstrumentationSetup f
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
             if enable then return [LocalReference (ptr ty) v] else return []
-        | (v := o) <- site, (GetElementPtr _ addr@(LocalReference (PointerType ty _) _) ixs _) <- o = do
-            if isFunctionType ty
-            then return []
-            else do
-              ty' <- index (typeOf addr) ixs
-              if isJust ty'
-              then return [LocalReference (ptr $ fromJust ty') v]
-              else return []
-        | (v := o) <- site, (BitCast (LocalReference (PointerType ty' _) _) ty _) <- o = do
-            enable <- gets (CLI.instrumentBitcast . options)
-            if (enable && (not $ isFunctionType ty'))
-            then return [LocalReference ty v]
-            else return []
         | otherwise = return []
 
       createMetadataStackSlots p
