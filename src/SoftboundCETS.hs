@@ -657,11 +657,12 @@ emitInstrumentationSetup f
         | (Parameter (PointerType {}) _ _) <- p = True
         | otherwise = False
 
-      collectMetadataAllocationSites (BasicBlock _ i _) = do
-        liftM concat $ mapM examineMetadataAllocationSite i
+      collectMetadataAllocationSites (BasicBlock _ i t) = do
+        instSites <- liftM concat $ mapM examineMetadataAllocationSiteInst i
+        termSites <- examineMetadataAllocationSiteTerm t
+        return (termSites ++ instSites)
 
-      -- If an instruction can cause a new pointer to be created, then it can cause new metadata to be allocated
-      examineMetadataAllocationSite site
+      examineMetadataAllocationSiteInst site
         | (v := o) <- site, (Load _ addr@(LocalReference (PointerType ty _) _) _ _ _) <- o = do
             enable <- gets (CLI.instrumentLoad . options)
             if (enable && (not $ isFunctionType ty) && isPointerType ty)
@@ -691,6 +692,10 @@ emitInstrumentationSetup f
                             filter isPointerOperand $ map fst opds
               return ptrArgs
             else return []
+        | otherwise = return []
+
+      examineMetadataAllocationSiteTerm site
+        | (Do (Ret (Just op@(LocalReference (PointerType _ _) _)) _)) <- site = return [op]
         | otherwise = return []
 
       createMetadataStackSlots p
@@ -780,7 +785,9 @@ emitMetadataStoreToShadowStack callee op ix
                                                 then do
                                                   newMetadata <- getOrCreateMetadataStorage op
                                                   loadMetadataForAddress op newMetadata
-                                                else error $ "in function " ++ (unpack $ ppll callee) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
+                                                else do
+                                                  func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . current)
+                                                  error $ "in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
