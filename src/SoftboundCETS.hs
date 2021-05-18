@@ -41,6 +41,18 @@ import qualified CLI
 --   associated with some user pointer.
 type Metadata = (Operand, Operand, Operand, Operand)
 
+baseOf :: Metadata -> Operand
+baseOf (base, _, _, _) = base
+
+boundOf :: Metadata -> Operand
+boundOf (_, bound, _, _) = bound
+
+keyOf :: Metadata -> Operand
+keyOf (_, _, key, _) = key
+
+lockOf :: Metadata -> Operand
+lockOf (_, _, _, lock) = lock
+
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                  -- ^ Pointer to the global lock.
                                , localStackFrameKeyPtr :: Maybe Operand
@@ -249,7 +261,7 @@ instrument blist opts m = do
           intBase <- ptrtoint base i64
           intBound <- add allocSize intBase
           bound <- inttoptr intBound (ptr i8)
-          (basePtr, boundPtr, keyPtr, lockPtr) <- getOrCreateMetadataStorage resultPtr
+          meta@(basePtr, boundPtr, keyPtr, lockPtr) <- getOrCreateMetadataStorage resultPtr
           store basePtr 8 base
           store boundPtr 8 bound
           functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
@@ -258,7 +270,7 @@ instrument blist opts m = do
           functionLock <- load functionLockPtr 0
           store keyPtr 8 functionKey
           store lockPtr 8 functionLock
-          modify $ \s -> s { stackMetadataTable = Data.Map.insert resultPtr (basePtr, boundPtr, keyPtr, lockPtr) $ stackMetadataTable s }
+          modify $ \s -> s { stackMetadataTable = Data.Map.insert resultPtr meta $ stackMetadataTable s }
 
       | (Load _ addr@(LocalReference (PointerType ty _) n) _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)
@@ -382,74 +394,52 @@ instrument blist opts m = do
         unsafeF <- gets (not . Data.Set.member fn . safe)
 
         when ((not $ isFunctionType ty) && haveMetadata) $ do
-          (tBasePtr, tBoundPtr, tKeyPtr, tLockPtr) <- if haveStackMetadataT
-                                                      then gets ((! tval) . stackMetadataTable)
-                                                      else gets ((! tval) . blockMetadataTable)
-          (fBasePtr, fBoundPtr, fKeyPtr, fLockPtr) <- if haveStackMetadataF
-                                                      then gets ((! fval) . stackMetadataTable)
-                                                      else gets ((! fval) . blockMetadataTable)
-          basePtr <- select cond tBasePtr fBasePtr
-          boundPtr <- select cond tBoundPtr fBoundPtr
-          keyPtr <- select cond tKeyPtr fKeyPtr
-          lockPtr <- select cond tLockPtr fLockPtr
+          tMeta <- if haveStackMetadataT
+                   then gets ((! tval) . stackMetadataTable)
+                   else gets ((! tval) . blockMetadataTable)
+          fMeta <- if haveStackMetadataF
+                   then gets ((! fval) . stackMetadataTable)
+                   else gets ((! fval) . blockMetadataTable)
+          basePtr <- select cond (baseOf tMeta) (baseOf fMeta)
+          boundPtr <- select cond (boundOf tMeta) (boundOf fMeta)
+          keyPtr <- select cond (keyOf tMeta) (keyOf fMeta)
+          lockPtr <- select cond (lockOf tMeta) (lockOf fMeta)
           let newPtr = LocalReference (ptr ty) v
-          let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
+          let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
           if haveStackMetadataT && haveStackMetadataF
-          then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMetadata $ stackMetadataTable s }
-          else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+          then modify $ \s -> s { stackMetadataTable = Data.Map.insert newPtr newMeta $ stackMetadataTable s }
+          else modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMeta $ blockMetadataTable s }
           if not (unsafeT && unsafeF)
           then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
           else return ()
           -- The pointer created by select aliases a pointer with allocated metadata storage
-          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMetadata $ metadataStorage s }
+          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
 
       | (Phi (PointerType ty _) incoming _) <- o = do
         emitNamedInst i
+
+        let phiMeta f (op, n) = do
+              meta <- if isConstantOperand op
+                      then gets (fromJust . dontCareMetadata)
+                      else do
+                        allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                        if allocated then gets ((! op) . metadataStorage)
+                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+              return (f meta, n)
+
         when (not $ isFunctionType ty) $ do
-          incomingBases <- forM incoming (\(op, n) -> do
-                            (base, _, _, _)  <- do
-                              if isConstantOperand op
-                              then gets (fromJust . dontCareMetadata)
-                              else do
-                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                                if allocated then gets ((! op) . metadataStorage)
-                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
-                            return (base, n))
+          incomingBases <- forM incoming (phiMeta baseOf)
           basePtr <- phi incomingBases
-          incomingBounds <- forM incoming (\(op, n) -> do
-                          (_, bound, _, _)  <- do
-                              if isConstantOperand op
-                              then gets (fromJust . dontCareMetadata)
-                              else do
-                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                                if allocated then gets ((! op) . metadataStorage)
-                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
-                          return (bound, n))
+          incomingBounds <- forM incoming (phiMeta boundOf)
           boundPtr <- phi incomingBounds
-          incomingKeys <- forM incoming (\(op, n) -> do
-                            (_, _, key, _)  <- do
-                              if isConstantOperand op
-                              then gets (fromJust . dontCareMetadata)
-                              else do
-                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                                if allocated then gets ((! op) . metadataStorage)
-                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
-                            return (key, n))
+          incomingKeys <- forM incoming (phiMeta keyOf)
           keyPtr <- phi incomingKeys
-          incomingLocks <- forM incoming (\(op, n) -> do
-                            (_, _, _, lock)  <- do
-                              if isConstantOperand op
-                              then gets (fromJust . dontCareMetadata)
-                              else do
-                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                                if allocated then gets ((! op) . metadataStorage)
-                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
-                            return (lock, n))
+          incomingLocks <- forM incoming (phiMeta lockOf)
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
-          let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
+          let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
           -- The pointer created by phi is only assumed valid within the current basic block
-          modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+          modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMeta $ blockMetadataTable s }
 
       | otherwise = emitNamedInst i
 
