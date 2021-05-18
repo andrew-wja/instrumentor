@@ -446,8 +446,6 @@ instrument blist opts m = do
           let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
           -- The pointer created by phi is only assumed valid within the current basic block
           modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
-          -- The pointer created by phi aliases a pointer with allocated metadata storage
-          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMetadata $ metadataStorage s }
 
       | otherwise = emitNamedInst i
 
