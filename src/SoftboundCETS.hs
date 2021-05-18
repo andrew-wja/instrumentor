@@ -410,8 +410,8 @@ instrument blist opts m = do
                             (base, _, _, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if (isZeroInitializer op || isUndef op)
-                                   then gets (fromJust . nullMetadata)
+                              else if isConstantOperand op
+                                   then gets (fromJust . dontCareMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (base, n))
           basePtr <- phi incomingBases
@@ -419,8 +419,8 @@ instrument blist opts m = do
                           (_, bound, _, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if (isZeroInitializer op || isUndef op)
-                                   then gets (fromJust . nullMetadata)
+                              else if isConstantOperand op
+                                   then gets (fromJust . dontCareMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                           return (bound, n))
           boundPtr <- phi incomingBounds
@@ -428,8 +428,8 @@ instrument blist opts m = do
                             (_, _, key, _)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if (isZeroInitializer op || isUndef op)
-                                   then gets (fromJust . nullMetadata)
+                              else if isConstantOperand op
+                                   then gets (fromJust . dontCareMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (key, n))
           keyPtr <- phi incomingKeys
@@ -437,8 +437,8 @@ instrument blist opts m = do
                             (_, _, _, lock)  <- do
                               allocated <- gets ((Data.Map.member op) .  metadataStorage)
                               if allocated then gets ((! op) . metadataStorage)
-                              else if (isZeroInitializer op || isUndef op)
-                                   then gets (fromJust . nullMetadata)
+                              else if isConstantOperand op
+                                   then gets (fromJust . dontCareMetadata)
                                    else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (lock, n))
           lockPtr <- phi incomingLocks
@@ -619,46 +619,6 @@ loadMetadataForAddress addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
     return meta
   | otherwise = error $ "loadMetadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
 
--- | Helper predicate.
-isUndef :: Operand -> Bool
-isUndef (ConstantOperand (Const.Undef _)) = True
-isUndef _ = False
-
--- | Helper predicate.
-isZeroInitializer :: Operand -> Bool
-isZeroInitializer (ConstantOperand (Const.Null _)) = True
-isZeroInitializer _ = False
-
--- | Helper predicate.
-isLocalReference :: Operand -> Bool
-isLocalReference (LocalReference {}) = True
-isLocalReference _ = False
-
--- | Helper predicate.
-isPointerOperand :: Operand -> Bool
-isPointerOperand (LocalReference (PointerType {}) _) = True
-isPointerOperand _ = False
-
--- | Helper predicate.
-isPointerType :: Type -> Bool
-isPointerType (PointerType {}) = True
-isPointerType _ = False
-
--- | Helper predicate.
-isFunctionType :: Type -> Bool
-isFunctionType (FunctionType {}) = True
-isFunctionType _ = False
-
--- | Helper predicate.
-isFuncDef :: Definition -> Bool
-isFuncDef (GlobalDefinition (Function {})) = True
-isFuncDef _ = False
-
--- | Helper predicate.
-getFuncName :: Definition -> Name
-getFuncName (GlobalDefinition f@(Function {})) = name f
-getFuncName _ = undefined
-
 -- | Generate the instrumentation setup block for a function. Allocate space for metadata of any non-function-type pointer arguments, create
 --   stack slots eagerly for all locally allocated metadata and then branch unconditionally to the first block in the function body.
 emitInstrumentationSetup :: (MonadModuleBuilder m, MonadIRBuilder m, MonadState SBCETSState m) => Global -> m ()
@@ -729,8 +689,6 @@ emitInstrumentationSetup f
             keyPtr <- alloca (i64) Nothing 8
             lockPtr <- alloca (ptr i8) Nothing 8
             modify $ \s -> s { metadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ metadataStorage s }
-        | (ConstantOperand (Const.Null (PointerType {}))) <- p = return ()
-        | (ConstantOperand (Const.Undef (PointerType {}))) <- p = return ()
         | otherwise  = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll p)
 
 -- | Create a local key and lock for entities allocated on the stack inside the current function
@@ -839,26 +797,6 @@ emitMetadataStoreToShadowStack callee op ix
       _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
                 [(lock, []), (ix', [])]
       return ()
-  | isUndef op || isZeroInitializer op = do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . nullMetadata)
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                [(base, []), (ix', [])]
-      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                [(bound, []), (ix', [])]
-      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
-                [(key, []), (ix', [])]
-      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                [(lock, []), (ix', [])]
-      return ()
   | otherwise = undefined
 
 -- | Index into a type with a list of consecutive 'Operand' indices.
@@ -877,3 +815,38 @@ index (NamedTypeReference nm) is' = do
     Nothing -> pure Nothing
     Just ty -> index ty is'
 index t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
+
+-- | Helper predicate.
+isConstantOperand :: Operand -> Bool
+isConstantOperand (ConstantOperand {}) = True
+isConstantOperand _ = False
+
+-- | Helper predicate.
+isLocalReference :: Operand -> Bool
+isLocalReference (LocalReference {}) = True
+isLocalReference _ = False
+
+-- | Helper predicate.
+isPointerOperand :: Operand -> Bool
+isPointerOperand (LocalReference (PointerType {}) _) = True
+isPointerOperand _ = False
+
+-- | Helper predicate.
+isPointerType :: Type -> Bool
+isPointerType (PointerType {}) = True
+isPointerType _ = False
+
+-- | Helper predicate.
+isFunctionType :: Type -> Bool
+isFunctionType (FunctionType {}) = True
+isFunctionType _ = False
+
+-- | Helper predicate.
+isFuncDef :: Definition -> Bool
+isFuncDef (GlobalDefinition (Function {})) = True
+isFuncDef _ = False
+
+-- | Helper predicate.
+getFuncName :: Definition -> Name
+getFuncName (GlobalDefinition f@(Function {})) = name f
+getFuncName _ = undefined
