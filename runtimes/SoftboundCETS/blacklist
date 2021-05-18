@@ -58,6 +58,7 @@ fprintf
 fputc
 fputs
 fread
+fread_unlocked
 fscanf
 fseek
 fstat
