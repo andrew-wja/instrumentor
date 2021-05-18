@@ -84,6 +84,10 @@ is explictly held by reference to its address) to be created.
 local variables in order for `phi` nodes to be generated to select the correct
 metadata at runtime.
 
+6. Returning a pointer from a function requires the metadata for that pointer
+to be allocated in local variables in order for it to be pushed to the shadow
+stack.
+
 All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.
 For example, if a pointer is `bitcast` to a different type, both pointers share
