@@ -682,6 +682,15 @@ emitInstrumentationSetup f
         | (v := o) <- site, (Alloca ty _ _ _) <- o = do
             enable <- gets (CLI.instrumentStack . options)
             if enable then return [LocalReference (ptr ty) v] else return []
+        | (Do o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname@(Name {})))) opds _ _) <- o = do
+            enable <- gets (CLI.instrumentCall . options)
+            bl <- gets blacklist
+            if (enable && (not $ ignore bl fname))
+            then do
+              let ptrArgs = filter (not . isFunctionType . pointerReferent . typeOf) $
+                            filter isPointerOperand $ map fst opds
+              return ptrArgs
+            else return []
         | otherwise = return []
 
       createMetadataStackSlots p
@@ -771,10 +780,7 @@ emitMetadataStoreToShadowStack callee op ix
                                                 then do
                                                   newMetadata <- getOrCreateMetadataStorage op
                                                   loadMetadataForAddress op newMetadata
-                                                else do
-                                                  tell ["in function " ++ (unpack $ ppll callee) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)]
-                                                  newMetadata <- getOrCreateMetadataStorage op
-                                                  loadMetadataForAddress op newMetadata
+                                                else error $ "in function " ++ (unpack $ ppll callee) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
         (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
