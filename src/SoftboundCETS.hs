@@ -408,44 +408,50 @@ instrument blist opts m = do
         when (not $ isFunctionType ty) $ do
           incomingBases <- forM incoming (\(op, n) -> do
                             (base, _, _, _)  <- do
-                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                              if allocated then gets ((! op) . metadataStorage)
-                              else if isConstantOperand op
-                                   then gets (fromJust . dontCareMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                              if isConstantOperand op
+                              then gets (fromJust . dontCareMetadata)
+                              else do
+                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                                if allocated then gets ((! op) . metadataStorage)
+                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (base, n))
           basePtr <- phi incomingBases
           incomingBounds <- forM incoming (\(op, n) -> do
                           (_, bound, _, _)  <- do
-                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                              if allocated then gets ((! op) . metadataStorage)
-                              else if isConstantOperand op
-                                   then gets (fromJust . dontCareMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                              if isConstantOperand op
+                              then gets (fromJust . dontCareMetadata)
+                              else do
+                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                                if allocated then gets ((! op) . metadataStorage)
+                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                           return (bound, n))
           boundPtr <- phi incomingBounds
           incomingKeys <- forM incoming (\(op, n) -> do
                             (_, _, key, _)  <- do
-                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                              if allocated then gets ((! op) . metadataStorage)
-                              else if isConstantOperand op
-                                   then gets (fromJust . dontCareMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                              if isConstantOperand op
+                              then gets (fromJust . dontCareMetadata)
+                              else do
+                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                                if allocated then gets ((! op) . metadataStorage)
+                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (key, n))
           keyPtr <- phi incomingKeys
           incomingLocks <- forM incoming (\(op, n) -> do
                             (_, _, _, lock)  <- do
-                              allocated <- gets ((Data.Map.member op) .  metadataStorage)
-                              if allocated then gets ((! op) . metadataStorage)
-                              else if isConstantOperand op
-                                   then gets (fromJust . dontCareMetadata)
-                                   else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                              if isConstantOperand op
+                              then gets (fromJust . dontCareMetadata)
+                              else do
+                                allocated <- gets ((Data.Map.member op) .  metadataStorage)
+                                if allocated then gets ((! op) . metadataStorage)
+                                else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
                             return (lock, n))
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
           let newMetadata = (basePtr, boundPtr, keyPtr, lockPtr)
           -- The pointer created by phi is only assumed valid within the current basic block
           modify $ \s -> s { blockMetadataTable = Data.Map.insert newPtr newMetadata $ blockMetadataTable s }
+          -- The pointer created by phi aliases a pointer with allocated metadata storage
+          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMetadata $ metadataStorage s }
 
       | otherwise = emitNamedInst i
 
