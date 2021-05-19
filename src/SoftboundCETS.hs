@@ -36,6 +36,38 @@ import Data.Text.Lazy (unpack)
 import Utils
 import qualified CLI
 
+-- | Index into a type with a list of consecutive 'Operand' indices.
+operandTypeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+operandTypeIndex ty [] = pure $ Just ty
+operandTypeIndex (PointerType ty _) (_:is') = operandTypeIndex ty is'
+operandTypeIndex (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+  operandTypeIndex (head $ drop (fromIntegral val) elTys) is'
+operandTypeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
+operandTypeIndex (VectorType _ elTy) (_:is') = operandTypeIndex elTy is'
+operandTypeIndex (ArrayType _ elTy) (_:is') = operandTypeIndex elTy is'
+operandTypeIndex (NamedTypeReference nm) is' = do
+  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
+  case mayTy of
+    Nothing -> pure Nothing
+    Just ty -> operandTypeIndex ty is'
+operandTypeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
+
+-- | Index into a type with a list of consecutive 'Constant' indices.
+constantTypeIndex :: MonadModuleBuilder m => Type -> [Const.Constant] -> m (Maybe Type)
+constantTypeIndex ty [] = pure $ Just ty
+constantTypeIndex (PointerType ty _) (_:is') = constantTypeIndex ty is'
+constantTypeIndex (StructureType _ elTys) ((Const.Int 32 val):is') =
+  constantTypeIndex (head $ drop (fromIntegral val) elTys) is'
+constantTypeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
+constantTypeIndex (VectorType _ elTy) (_:is') = constantTypeIndex elTy is'
+constantTypeIndex (ArrayType _ elTy) (_:is') = constantTypeIndex elTy is'
+constantTypeIndex (NamedTypeReference nm) is' = do
+  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
+  case mayTy of
+    Nothing -> pure Nothing
+    Just ty -> constantTypeIndex ty is'
+constantTypeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
+
 -- | Metadata is a 4-tuple of pointers to stack-allocated entities:
 --   the base pointer, bound pointer, key value, and lock location
 --   associated with some user pointer.
@@ -157,6 +189,36 @@ ignore blist func
     isInfixOfName :: String -> Name -> Bool
     isInfixOfName s (Name s') = isInfixOf s $ show s'
     isInfixOfName _ _ = False
+
+-- | The 'examinePointer' function encodes the shape of LLVM IR entities
+--   which are subject to instrumentation. There are a lot of ways to write an
+--   expression whose value is a pointer in LLVM IR, but we need only some specifics
+--   in each case: the pointer's referent type and the name of the SSA register which
+--   holds the pointer. In order to deal with all the ways in which a pointer can be
+--   constructed, in the following code which actually handles instrumentation, we use
+--   the success of 'examinePointer' as a gate condition for instrumentation,
+--   rather than writing out explicit pattern matches against instruction arguments.
+--   Note that there are several ways to get an "immediate" or bare pointer in LLVM,
+--   which is not register allocated (e.g. constant expressions with pointer type).
+--   These pointers have a referent type but do not have an SSA register associated.
+examinePointer :: MonadModuleBuilder m => Operand -> m (Maybe (Maybe Name, Maybe Type))
+examinePointer p
+  | (LocalReference (PointerType ty _) n) <- p = pure $ Just (Just n, Just ty)
+  | (ConstantOperand (Const.Null (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = pure $ Just (Just n, Just ty)
+  | (ConstantOperand (Const.GetElementPtr _ addr ixs)) <- p = do
+      ty <- constantTypeIndex (typeOf addr) ixs
+      return $ Just (Nothing, ty)
+  | (ConstantOperand (Const.IntToPtr _ (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.BitCast _ (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.AddrSpaceCast _ (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand op@(Const.Select _ _ _)) <- p, (PointerType ty _) <- typeOf op = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.ExtractElement v _)) <- p, (PointerType ty _) <- elementType $ typeOf v = pure $ Just (Nothing, Just ty)
+  | (ConstantOperand (Const.ExtractValue agg ixs)) <- p = do
+      ty <- constantTypeIndex (typeOf agg) (map (Const.Int 32 . fromIntegral) ixs)
+      return $ Just (Nothing, ty)
+  | otherwise = pure Nothing
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: [String] -> CLI.Options -> Module -> IO Module
@@ -340,7 +402,7 @@ instrument blist opts m = do
           haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
           unsafe <- gets (not . Data.Set.member n . safe)
           when (haveBlockMetadata || haveStackMetadata) $ do
-            ty' <- index (typeOf addr) ixs
+            ty' <- operandTypeIndex (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
             when (isJust ty') $ do
@@ -636,7 +698,7 @@ emitInstrumentationSetup f
     store nullKeyPtr 8 (ConstantOperand $ Const.Int 64 1)
     store nullLockPtr 8 nullPtr
     modify $ \s -> s { nullMetadata = Just (nullBasePtr, nullBoundPtr, nullKeyPtr, nullLockPtr) }
-    -- Collect all metadata allocation sites to eagerly allocated local variables for metadata
+    -- Collect all metadata allocation sites so we can allocate local variables for metadata ahead of time
     metadataAllocationSites <- liftM (nub . sort . concat) $ mapM collectMetadataAllocationSites $ basicBlocks f
     mapM_ createMetadataStackSlots metadataAllocationSites
     emitTerm $ Br firstBlockLabel []
@@ -803,23 +865,6 @@ emitMetadataStoreToShadowStack callee op ix
                 [(lock, []), (ix', [])]
       return ()
   | otherwise = undefined
-
--- | Index into a type with a list of consecutive 'Operand' indices.
---   May be used to e.g. compute the type of a structure field access, the return type of a getelementptr instruction, and so on.
-index :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-index ty [] = pure $ Just ty
-index (PointerType ty _) (_:is') = index ty is'
-index (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
-  index (head $ drop (fromIntegral val) elTys) is'
-index (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
-index (VectorType _ elTy) (_:is') = index elTy is'
-index (ArrayType _ elTy) (_:is') = index elTy is'
-index (NamedTypeReference nm) is' = do
-  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
-  case mayTy of
-    Nothing -> pure Nothing
-    Just ty -> index ty is'
-index t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
 
 -- | Helper predicate.
 isConstantOperand :: Operand -> Bool
