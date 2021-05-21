@@ -37,36 +37,20 @@ import Utils
 import qualified CLI
 
 -- | Index into a type with a list of consecutive 'Operand' indices.
-operandTypeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-operandTypeIndex ty [] = pure $ Just ty
-operandTypeIndex (PointerType ty _) (_:is') = operandTypeIndex ty is'
-operandTypeIndex (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
-  operandTypeIndex (head $ drop (fromIntegral val) elTys) is'
-operandTypeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
-operandTypeIndex (VectorType _ elTy) (_:is') = operandTypeIndex elTy is'
-operandTypeIndex (ArrayType _ elTy) (_:is') = operandTypeIndex elTy is'
-operandTypeIndex (NamedTypeReference nm) is' = do
+typeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+typeIndex ty [] = pure $ Just ty
+typeIndex (PointerType ty _) (_:is') = typeIndex ty is'
+typeIndex (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+  typeIndex (head $ drop (fromIntegral val) elTys) is'
+typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
+typeIndex (VectorType _ elTy) (_:is') = typeIndex elTy is'
+typeIndex (ArrayType _ elTy) (_:is') = typeIndex elTy is'
+typeIndex (NamedTypeReference nm) is' = do
   mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
   case mayTy of
     Nothing -> pure Nothing
-    Just ty -> operandTypeIndex ty is'
-operandTypeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
-
--- | Index into a type with a list of consecutive 'Constant' indices.
-constantTypeIndex :: MonadModuleBuilder m => Type -> [Const.Constant] -> m (Maybe Type)
-constantTypeIndex ty [] = pure $ Just ty
-constantTypeIndex (PointerType ty _) (_:is') = constantTypeIndex ty is'
-constantTypeIndex (StructureType _ elTys) ((Const.Int 32 val):is') =
-  constantTypeIndex (head $ drop (fromIntegral val) elTys) is'
-constantTypeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
-constantTypeIndex (VectorType _ elTy) (_:is') = constantTypeIndex elTy is'
-constantTypeIndex (ArrayType _ elTy) (_:is') = constantTypeIndex elTy is'
-constantTypeIndex (NamedTypeReference nm) is' = do
-  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
-  case mayTy of
-    Nothing -> pure Nothing
-    Just ty -> constantTypeIndex ty is'
-constantTypeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
+    Just ty -> typeIndex ty is'
+typeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
 
 -- | Metadata is a 4-tuple of pointers to stack-allocated entities:
 --   the base pointer, bound pointer, key value, and lock location
@@ -208,7 +192,7 @@ examinePointer p
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
   | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = pure $ Just (Just n, Just ty)
   | (ConstantOperand (Const.GetElementPtr _ addr ixs)) <- p = do
-      ty <- constantTypeIndex (typeOf addr) ixs
+      ty <- typeIndex (typeOf addr) (map ConstantOperand ixs)
       return $ Just (Nothing, ty)
   | (ConstantOperand (Const.IntToPtr _ (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
   | (ConstantOperand (Const.BitCast _ (PointerType ty _))) <- p = pure $ Just (Nothing, Just ty)
@@ -216,7 +200,7 @@ examinePointer p
   | (ConstantOperand op@(Const.Select _ _ _)) <- p, (PointerType ty _) <- typeOf op = pure $ Just (Nothing, Just ty)
   | (ConstantOperand (Const.ExtractElement v _)) <- p, (PointerType ty _) <- elementType $ typeOf v = pure $ Just (Nothing, Just ty)
   | (ConstantOperand (Const.ExtractValue agg ixs)) <- p = do
-      ty <- constantTypeIndex (typeOf agg) (map (Const.Int 32 . fromIntegral) ixs)
+      ty <- typeIndex (typeOf agg) (map (ConstantOperand . Const.Int 32 . fromIntegral) ixs)
       return $ Just (Nothing, ty)
   | otherwise = pure Nothing
 
@@ -402,7 +386,7 @@ instrument blist opts m = do
           haveStackMetadata <- gets ((Data.Map.member addr) . stackMetadataTable)
           unsafe <- gets (not . Data.Set.member n . safe)
           when (haveBlockMetadata || haveStackMetadata) $ do
-            ty' <- operandTypeIndex (typeOf addr) ixs
+            ty' <- typeIndex (typeOf addr) ixs
             -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
             -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
             when (isJust ty') $ do
