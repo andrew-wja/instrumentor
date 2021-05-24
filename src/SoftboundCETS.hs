@@ -33,24 +33,8 @@ import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
 import LLVM.Pretty (ppll)
 import Data.Text.Lazy (unpack)
-import Utils
+import Instrumentor
 import qualified CLI
-
--- | Index into a type with a list of consecutive 'Operand' indices.
-typeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-typeIndex ty [] = pure $ Just ty
-typeIndex (PointerType ty _) (_:is') = typeIndex ty is'
-typeIndex (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
-  typeIndex (head $ drop (fromIntegral val) elTys) is'
-typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
-typeIndex (VectorType _ elTy) (_:is') = typeIndex elTy is'
-typeIndex (ArrayType _ elTy) (_:is') = typeIndex elTy is'
-typeIndex (NamedTypeReference nm) is' = do
-  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
-  case mayTy of
-    Nothing -> pure Nothing
-    Just ty -> typeIndex ty is'
-typeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
 
 -- | Metadata is a 4-tuple of pointers to stack-allocated entities:
 --   the base pointer, bound pointer, key value, and lock location
@@ -68,6 +52,10 @@ keyOf (_, _, key, _) = key
 
 lockOf :: Metadata -> Operand
 lockOf (_, _, _, lock) = lock
+
+type SoftboundCETSPassStep a = InstrumentorPassStep () [String] SBCETSState a
+
+type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                  -- ^ Pointer to the global lock.
@@ -127,7 +115,6 @@ initSBCETSState = emptySBCETSState
     ("softboundcets_realloc", FunctionType (ptr i8) [ptr i8, i64] False),
     ("softboundcets_free", FunctionType (void) [ptr i8] False)
     ]
-
   , runtimeFunctionPrototypes = Data.Map.fromList [
     ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
     ("__softboundcets_metadata_check", FunctionType void [(ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
@@ -207,29 +194,16 @@ examinePointer p
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: [String] -> CLI.Options -> Module -> IO Module
 instrument blist opts m = do
-  let (warnings, instrumented) = instrumentDefinitions $ moduleDefinitions m
+  let blist' = Data.Set.fromList $ map mkName blist
+  let sbcetsState = initSBCETSState { instrumentationCandidates = functionsToInstrument blist' $ moduleDefinitions m
+                                    , renamingCandidates = Data.Set.singleton $ mkName "main"
+                                    , options = opts
+                                    , blacklist = blist'
+                                    }
+  ((m', _), warnings) <- runInstrumentorPass instrumentationPass sbcetsState () m
   mapM_ (putStrLn . ("instrumentor: "++)) warnings
-  return $ m { moduleDefinitions = instrumented }
+  return m'
   where
-    instrumentDefinitions :: [Definition] -> ([String], [Definition])
-    instrumentDefinitions defs =
-      let blist' = Data.Set.fromList $ map mkName blist
-          sbcetsState = initSBCETSState { instrumentationCandidates = functionsToInstrument blist' defs
-                                        , renamingCandidates = Data.Set.singleton $ mkName "main"
-                                        , options = opts
-                                        , blacklist = blist'
-                                        }
-          irBuilderState = emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" }
-          modBuilderState = emptyModuleBuilder
-          ((_, warnings), result) = runModuleBuilder modBuilderState $ do
-                                      (\x -> evalRWST x () sbcetsState) $
-                                        execIRBuilderT irBuilderState $ do
-                                          mapM_ emitRuntimeAPIFunctionDecl $ assocs $ runtimeFunctionPrototypes sbcetsState
-                                          mapM_ emitRuntimeAPIFunctionDecl $ assocs $ wrapperFunctionPrototypes sbcetsState
-                                          mapM_ instrumentDefinition defs
-                                          return ()
-      in (warnings, result)
-
     functionsToInstrument :: Data.Set.Set Name -> [Definition] -> Data.Set.Set Name
     functionsToInstrument bl defs = Data.Set.filter (not . ignore bl) $
                                     Data.Set.difference (Data.Set.fromList $ map getFuncName
@@ -237,7 +211,16 @@ instrument blist opts m = do
                                                                            $ defs)
                                                         (Data.Set.union bl wrappedFunctions)
 
-    emitRuntimeAPIFunctionDecl :: (String, Type) -> IRBuilderT (RWST () [String] SBCETSState ModuleBuilder) ()
+    instrumentationPass :: SoftboundCETSPass ()
+    instrumentationPass m' = do
+      rtFuncProtos <- gets (assocs . runtimeFunctionPrototypes)
+      mapM_ emitRuntimeAPIFunctionDecl rtFuncProtos
+      rtWrapperProtos <- gets (assocs . wrapperFunctionPrototypes)
+      mapM_ emitRuntimeAPIFunctionDecl rtWrapperProtos
+      mapM_ instrumentDefinition $ moduleDefinitions m'
+      return ()
+
+    emitRuntimeAPIFunctionDecl :: (String, Type) -> SoftboundCETSPassStep ()
     emitRuntimeAPIFunctionDecl decl
       | (fname, (FunctionType retType argTypes _)) <- decl = do
           _ <- extern (mkName fname) argTypes retType
@@ -884,3 +867,19 @@ isFuncDef _ = False
 getFuncName :: Definition -> Name
 getFuncName (GlobalDefinition f@(Function {})) = name f
 getFuncName _ = undefined
+
+-- | Index into a type with a list of consecutive 'Operand' indices.
+typeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
+typeIndex ty [] = pure $ Just ty
+typeIndex (PointerType ty _) (_:is') = typeIndex ty is'
+typeIndex (StructureType _ elTys) (ConstantOperand (Const.Int 32 val):is') =
+  typeIndex (head $ drop (fromIntegral val) elTys) is'
+typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
+typeIndex (VectorType _ elTy) (_:is') = typeIndex elTy is'
+typeIndex (ArrayType _ elTy) (_:is') = typeIndex elTy is'
+typeIndex (NamedTypeReference nm) is' = do
+  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
+  case mayTy of
+    Nothing -> pure Nothing
+    Just ty -> typeIndex ty is'
+typeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
