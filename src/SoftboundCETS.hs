@@ -64,9 +64,6 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ Pointer to the lock location for the current stack frame.
                                , instrumentationCandidates :: Data.Set.Set Name
                                -- ^ The set of names of functions to instrument in the current module.
-                               , renamingCandidates :: Data.Set.Set Name
-                               -- ^ The set of names of functions to rename in the current module.
-                               -- Renamed functions are prefixed with "softboundcets_".
                                , stdlibWrapperPrototypes :: Map Name (Name, Type)
                                -- ^ The runtime provides wrappers for these standard library functions.
                                , runtimeFunctionPrototypes :: Map Name Type
@@ -98,7 +95,7 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 -- | Create an empty 'SBCETSState'
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
-                               Data.Set.empty Data.Set.empty
+                               Data.Set.empty
                                Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
@@ -235,7 +232,7 @@ createMetadataForGlobal g
   | otherwise = error $ "createMetadataForGlobal: expected global variable, but got: " ++ (unpack $ ppll g)
 
 -- | Emit the declaration of a runtime API function.
-emitRuntimeAPIFunctionDecl :: (Name, Type) -> ModuleBuilder ()
+emitRuntimeAPIFunctionDecl :: (MonadModuleBuilder m) => (Name, Type) -> m ()
 emitRuntimeAPIFunctionDecl decl
   | (fname, (FunctionType retType argTypes _)) <- decl = do
       _ <- extern fname argTypes retType
@@ -251,18 +248,17 @@ emitRuntimeAPIFunctionCall n args = do
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: [String] -> CLI.Options -> Module -> IO Module
 instrument blacklist' opts m = do
-  let sbcetsState = initSBCETSState { renamingCandidates = Data.Set.singleton $ mkName "main"
-                                    , options = opts
-                                    , blacklist = Data.Set.fromList $ map mkName blacklist'
-                                    }
+  let sbcetsState = initSBCETSState { options = opts, blacklist = Data.Set.fromList $ map mkName blacklist' }
   ((m', _), warnings) <- runInstrumentorPass sbcetsPass sbcetsState () m
   mapM_ (putStrLn . ("instrumentor: "++)) warnings
   return m'
   where
     sbcetsPass :: SoftboundCETSPass ()
     sbcetsPass m' = do
-      _ <- mapM_ emitRuntimeAPIFunctionDecl <$> gets (assocs . runtimeFunctionPrototypes)
-      _ <- mapM_ emitRuntimeAPIFunctionDecl <$> gets (map snd . assocs . stdlibWrapperPrototypes)
+      rtFuncProtos <- gets (assocs . runtimeFunctionPrototypes)
+      _ <- mapM_ emitRuntimeAPIFunctionDecl rtFuncProtos
+      stdlibWrapperProtos <- gets (map snd . assocs . stdlibWrapperPrototypes)
+      _ <- mapM_ emitRuntimeAPIFunctionDecl stdlibWrapperProtos
       mapM_ instrumentDefinition $ moduleDefinitions m'
       return ()
 
@@ -274,15 +270,14 @@ instrument blacklist' opts m = do
       | (GlobalDefinition f@(Function {})) <- g = do
           hasWrapper <- isWrappedFunction $ name f
           ignore <- isIgnoredFunction (name f)
-          shouldRename <- gets $ (Data.Set.member $ name f) . renamingCandidates
-          if (not ignore && not hasWrapper) || shouldRename then do
-            instrumentFunction shouldRename f
+          if (not ignore && not hasWrapper) || name f == mkName "main" then do
+            instrumentFunction f
           else emitDefn g
       | otherwise = emitDefn g
 
-    instrumentFunction shouldRename f
+    instrumentFunction f
       | (Function {}) <- f = do
-          name' <- if shouldRename then gets (fst . (! (name f)) . stdlibWrapperPrototypes) else return $ name f
+          let name' = if name f == mkName "main" then mkName "softboundcets_main" else name f
           (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
             modify $ \s -> s { globalLockPtr = Nothing
                              , localStackFrameKeyPtr = Nothing

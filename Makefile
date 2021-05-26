@@ -1,4 +1,4 @@
-.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test dist-clean clean really-clean
+.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test dist-clean test-clean clean really-clean
 
 all: ensure-submodules build-llvm build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release
 
@@ -48,9 +48,11 @@ dist/doc:
 dist-clean:
 	rm -rf dist*
 
-clean: dist-clean
-	stack clean
+test-clean:
 	for x in `ls test`; do $(MAKE) -C test/$$x clean; done
+
+clean: dist-clean test-clean
+	stack clean
 
 really-clean: clean
 	rm -rf llvm-patches llvm-build runtimes-build
