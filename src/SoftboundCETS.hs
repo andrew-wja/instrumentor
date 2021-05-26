@@ -22,7 +22,7 @@ import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, nub, sort)
-import LLVM.AST hiding (index, Metadata)
+import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
@@ -235,7 +235,7 @@ createMetadataForGlobal g
   | otherwise = error $ "createMetadataForGlobal: expected global variable, but got: " ++ (unpack $ ppll g)
 
 -- | Emit the declaration of a runtime API function.
-emitRuntimeAPIFunctionDecl :: MonadIRBuilder m => (Name, Type) -> m ()
+emitRuntimeAPIFunctionDecl :: (Name, Type) -> ModuleBuilder ()
 emitRuntimeAPIFunctionDecl decl
   | (fname, (FunctionType retType argTypes _)) <- decl = do
       _ <- extern fname argTypes retType
@@ -243,7 +243,7 @@ emitRuntimeAPIFunctionDecl decl
   | otherwise = undefined
 
 -- | Emit a call to a runtime API function.
-emitRuntimeAPIFunctionCall :: (Monad m, MonadIRBuilder m, MonadState SBCETSState m) => String -> [Operand] -> m Operand
+emitRuntimeAPIFunctionCall :: (MonadIRBuilder m, MonadState SBCETSState m) => String -> [Operand] -> m Operand
 emitRuntimeAPIFunctionCall n args = do
   (fname, fproto) <- gets ((!! (mkName n)) . runtimeFunctionPrototypes)
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
@@ -261,8 +261,8 @@ instrument blacklist' opts m = do
   where
     sbcetsPass :: SoftboundCETSPass ()
     sbcetsPass m' = do
-      mapM_ emitRuntimeAPIFunctionDecl <$> gets (assocs . runtimeFunctionPrototypes)
-      mapM_ emitRuntimeAPIFunctionDecl <$> gets (map snd . assocs . stdlibWrapperPrototypes)
+      _ <- mapM_ emitRuntimeAPIFunctionDecl <$> gets (assocs . runtimeFunctionPrototypes)
+      _ <- mapM_ emitRuntimeAPIFunctionDecl <$> gets (map snd . assocs . stdlibWrapperPrototypes)
       mapM_ instrumentDefinition $ moduleDefinitions m'
       return ()
 
@@ -599,11 +599,6 @@ instrument blacklist' opts m = do
       -- Not a return instruction, don't instrument
       | otherwise = emitNamedTerm i
 
-    rewriteCalledFunctionName n f
-      | (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) <- f =
-          Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
-      | otherwise = undefined
-
     emitFirstBlock (BasicBlock n i t) = do
       emitBlockStart n
       -- Set up a handle to the global lock
@@ -631,6 +626,13 @@ instrument blacklist' opts m = do
 
     emitNamedInst (Do i) = do
       emitInstrVoid i
+
+-- | Helper to rewrite the called function symbol (for example, to a wrapper function symbol) at a callsite.
+rewriteCalledFunctionName :: Name -> Instruction -> Instruction
+rewriteCalledFunctionName n f
+  | (Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty _))) params attrs meta) <- f =
+      Call tckind cconv retAttrs (Right (ConstantOperand (Const.GlobalReference fty n))) params attrs meta
+  | otherwise = undefined
 
 -- | Allocate (or return if already allocated) local variables to hold the metadata for the given pointer.
 getOrCreateMetadataStorage :: (MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
@@ -749,7 +751,7 @@ emitInstrumentationSetup f
         | otherwise  = error $ "createMetadataStackSlots: expecting a pointer but saw " ++ (unpack $ ppll p)
 
 -- | Create a local key and lock for entities allocated on the stack inside the current function
-emitLocalKeyAndLockCreation :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSState ModuleBuilder)) ()
+emitLocalKeyAndLockCreation :: (MonadState SBCETSState m, MonadIRBuilder m) => m ()
 emitLocalKeyAndLockCreation = do
   keyPtr <- alloca i64 Nothing 8
   lockPtr <- alloca (ptr i8) Nothing 8
@@ -760,7 +762,7 @@ emitLocalKeyAndLockCreation = do
 -- | Invalidate the local key; We do this just prior to returning from the function.
 --   Subsequent use of a leaked stack-allocated variable from inside the current function
 --   will cause a runtime error with a key mismatch.
-emitLocalKeyAndLockDestruction :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSState ModuleBuilder)) ()
+emitLocalKeyAndLockDestruction :: (MonadState SBCETSState m, MonadIRBuilder m) => m ()
 emitLocalKeyAndLockDestruction = do
   keyPtr <- gets (fromJust . localStackFrameKeyPtr)
   key <- load keyPtr 0
@@ -775,7 +777,7 @@ emitShadowStackAllocation numArgs = do
   return ()
 
 -- | Deallocate the shadow stack space for the instrumented function which just returned.
-emitShadowStackDeallocation :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSState ModuleBuilder)) ()
+emitShadowStackDeallocation :: (MonadState SBCETSState m, MonadIRBuilder m) => m ()
 emitShadowStackDeallocation = do
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
