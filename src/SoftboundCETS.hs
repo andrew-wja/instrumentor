@@ -1,6 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
 {-|
 Module      : SoftboundCETS
@@ -53,8 +54,6 @@ getKey (_, _, key, _) = key
 getLock :: Metadata -> Operand
 getLock (_, _, _, lock) = lock
 
-type SoftboundCETSPassStep a = InstrumentorPassStep () [String] SBCETSState a
-
 type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
 
 data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
@@ -68,10 +67,10 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                , renamingCandidates :: Data.Set.Set Name
                                -- ^ The set of names of functions to rename in the current module.
                                -- Renamed functions are prefixed with "softboundcets_".
-                               , wrapperFunctionPrototypes :: Map String Type
-                               -- ^ Prototypes of the runtime wrapper functions, used to create calls.
-                               , runtimeFunctionPrototypes :: Map String Type
-                               -- ^ Prototypes of the runtime instrumentation functions, used to create calls.
+                               , stdlibWrapperPrototypes :: Map Name (Name, Type)
+                               -- ^ The runtime provides wrappers for these standard library functions.
+                               , runtimeFunctionPrototypes :: Map Name Type
+                               -- ^ Prototypes of the runtime instrumentation API functions.
                                , basicBlockMetadataTable :: Map Operand Metadata
                                -- ^ The symbol table mapping pointers to their local metadata.
                                --  'basicBlockMetadataTable' must be saved and restored around basic block entry and exit,
@@ -106,42 +105,42 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty Data.Set.empty
                                Nothing Nothing Data.Map.empty
 
--- | The initial 'SBCETSState' has 'wrapperFunctionPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
+-- | The initial 'SBCETSState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
-  { wrapperFunctionPrototypes = Data.Map.fromList [
-    ("softboundcets_calloc", FunctionType (ptr i8) [i64, i64] False),
-    ("softboundcets_malloc", FunctionType (ptr i8) [i64] False),
-    ("softboundcets_realloc", FunctionType (ptr i8) [ptr i8, i64] False),
-    ("softboundcets_free", FunctionType (void) [ptr i8] False)
+  { stdlibWrapperPrototypes = Data.Map.fromList [
+    (mkName "calloc",   (mkName "softboundcets_calloc",   FunctionType (ptr i8) [i64, i64] False)),
+    (mkName "malloc",   (mkName "softboundcets_malloc",   FunctionType (ptr i8) [i64] False)),
+    (mkName "realloc",  (mkName "softboundcets_realloc",  FunctionType (ptr i8) [ptr i8, i64] False)),
+    (mkName "free",     (mkName "softboundcets_free",     FunctionType (void) [ptr i8] False))
     ]
   , runtimeFunctionPrototypes = Data.Map.fromList [
-    ("__softboundcets_get_global_lock", FunctionType (ptr i8) [] False),
-    ("__softboundcets_metadata_check", FunctionType void [(ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
-    ("__softboundcets_metadata_load", FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
-    ("__softboundcets_metadata_store", FunctionType void [ptr i8, ptr i8, ptr i8, i64, ptr i8] False),
-    ("__softboundcets_load_base_shadow_stack", FunctionType (ptr i8) [i32] False),
-    ("__softboundcets_load_bound_shadow_stack", FunctionType (ptr i8) [i32] False),
-    ("__softboundcets_load_key_shadow_stack", FunctionType (i64) [i32] False),
-    ("__softboundcets_load_lock_shadow_stack", FunctionType (ptr i8) [i32] False),
-    ("__softboundcets_store_base_shadow_stack", FunctionType void [ptr i8, i32] False),
-    ("__softboundcets_store_bound_shadow_stack", FunctionType void [ptr i8, i32] False),
-    ("__softboundcets_store_key_shadow_stack", FunctionType void [i64, i32] False),
-    ("__softboundcets_store_lock_shadow_stack", FunctionType void [ptr i8, i32] False),
-    ("__softboundcets_allocate_shadow_stack_space", FunctionType void [i32] False),
-    ("__softboundcets_deallocate_shadow_stack_space", FunctionType void [] False),
-    ("__softboundcets_spatial_load_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-    ("__softboundcets_temporal_load_dereference_check", FunctionType void [ptr i8, i64] False),
-    ("__softboundcets_spatial_store_dereference_check", FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
-    ("__softboundcets_temporal_store_dereference_check", FunctionType void [ptr i8, i64] False),
-    ("__softboundcets_create_stack_key", FunctionType void [(ptr $ ptr i8), ptr i64] False),
-    ("__softboundcets_destroy_stack_key", FunctionType void [i64] False)
+    (mkName "__softboundcets_get_global_lock",                   FunctionType (ptr i8) [] False),
+    (mkName "__softboundcets_metadata_check",                    FunctionType void [(ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
+    (mkName "__softboundcets_metadata_load",                     FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
+    (mkName "__softboundcets_metadata_store",                    FunctionType void [ptr i8, ptr i8, ptr i8, i64, ptr i8] False),
+    (mkName "__softboundcets_load_base_shadow_stack",            FunctionType (ptr i8) [i32] False),
+    (mkName "__softboundcets_load_bound_shadow_stack",           FunctionType (ptr i8) [i32] False),
+    (mkName "__softboundcets_load_key_shadow_stack",             FunctionType (i64) [i32] False),
+    (mkName "__softboundcets_load_lock_shadow_stack",            FunctionType (ptr i8) [i32] False),
+    (mkName "__softboundcets_store_base_shadow_stack",           FunctionType void [ptr i8, i32] False),
+    (mkName "__softboundcets_store_bound_shadow_stack",          FunctionType void [ptr i8, i32] False),
+    (mkName "__softboundcets_store_key_shadow_stack",            FunctionType void [i64, i32] False),
+    (mkName "__softboundcets_store_lock_shadow_stack",           FunctionType void [ptr i8, i32] False),
+    (mkName "__softboundcets_allocate_shadow_stack_space",       FunctionType void [i32] False),
+    (mkName "__softboundcets_deallocate_shadow_stack_space",     FunctionType void [] False),
+    (mkName "__softboundcets_spatial_load_dereference_check",    FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
+    (mkName "__softboundcets_temporal_load_dereference_check",   FunctionType void [ptr i8, i64] False),
+    (mkName "__softboundcets_spatial_store_dereference_check",   FunctionType void [ptr i8, ptr i8, ptr i8, i64] False),
+    (mkName "__softboundcets_temporal_store_dereference_check",  FunctionType void [ptr i8, i64] False),
+    (mkName "__softboundcets_create_stack_key",                  FunctionType void [(ptr $ ptr i8), ptr i64] False),
+    (mkName "__softboundcets_destroy_stack_key",                 FunctionType void [i64] False)
     ]
   }
 
 -- | Decide whether the given function symbol is a function that should not be instrumented.
-ignoredFunction :: MonadState SBCETSState m => Name -> m Bool
-ignoredFunction func
+isIgnoredFunction :: MonadState SBCETSState m => Name -> m Bool
+isIgnoredFunction func
   | isInfixOfName "__softboundcets" func = return True  -- One of our runtime functions
   | isInfixOfName "isoc99" func = return True           -- ISO C99 intrinsic functions
   | isInfixOfName "llvm." func = return True            -- LLVM intrinsic functions
@@ -152,6 +151,10 @@ ignoredFunction func
     isInfixOfName :: String -> Name -> Bool
     isInfixOfName s (Name s') = isInfixOf s $ show s'
     isInfixOfName _ _ = False
+
+-- | Check if the given function symbol is a function with a runtime wrapper
+isWrappedFunction :: MonadState SBCETSState m => Name -> m Bool
+isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapperPrototypes)
 
 -- | 'inspectPointer' is probably the most crucial single function in this code.
 --   There are *many* ways to write an expression whose value is a pointer in LLVM IR.
@@ -189,14 +192,14 @@ inspectPointer p
       return Nothing
   -}
   | otherwise = do
-      tell ["encountered unhandled pointer expression: " ++ (unpack $ ppll p)]
+      tell ["inspectPointer: unsupported pointer " ++ (unpack $ ppll p)]
       return Nothing
 
 -- | When we encounter a global definition, we need to allocate metadata for
 --   it if it is not a function or function alias. This is because all globals
 --   in LLVM implicitly have their address taken; global definitions define a
 --   *pointer* to an entity, just like 'alloca' definitions.
-createMetadataForGlobal :: Global -> SoftboundCETSPassStep ()
+createMetadataForGlobal :: (MonadModuleBuilder m, MonadIRBuilder m, MonadState SBCETSState m) => Global -> m ()
 createMetadataForGlobal g
   | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_ctors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-ctors-global-variable
   | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_dtors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-dtors-global-variable
@@ -217,8 +220,8 @@ createMetadataForGlobal g
             let key = ConstantOperand $ Const.Int 64 1
             glp <- gets (fromJust . globalLockPtr)
             lock <- load glp 0
-            (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
-            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
+            (fname', fproto') <- gets ((!! (mkName "__softboundcets_metadata_store")) . runtimeFunctionPrototypes)
+            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') fname')
                         [(addr, []), (base', []), (bound', []), (key, []), (lock, [])]
             return ()
           else return ()
@@ -231,6 +234,20 @@ createMetadataForGlobal g
         _ -> return ()
   | otherwise = error $ "createMetadataForGlobal: expected global variable, but got: " ++ (unpack $ ppll g)
 
+-- | Emit the declaration of a runtime API function.
+emitRuntimeAPIFunctionDecl :: MonadIRBuilder m => (Name, Type) -> m ()
+emitRuntimeAPIFunctionDecl decl
+  | (fname, (FunctionType retType argTypes _)) <- decl = do
+      _ <- extern fname argTypes retType
+      return ()
+  | otherwise = undefined
+
+-- | Emit a call to a runtime API function.
+emitRuntimeAPIFunctionCall :: (Monad m, MonadIRBuilder m, MonadState SBCETSState m) => String -> [Operand] -> m Operand
+emitRuntimeAPIFunctionCall n args = do
+  (fname, fproto) <- gets ((!! (mkName n)) . runtimeFunctionPrototypes)
+  call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
+
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: [String] -> CLI.Options -> Module -> IO Module
 instrument blacklist' opts m = do
@@ -238,34 +255,16 @@ instrument blacklist' opts m = do
                                     , options = opts
                                     , blacklist = Data.Set.fromList $ map mkName blacklist'
                                     }
-  ((m', _), warnings) <- runInstrumentorPass instrumentationPass sbcetsState () m
+  ((m', _), warnings) <- runInstrumentorPass sbcetsPass sbcetsState () m
   mapM_ (putStrLn . ("instrumentor: "++)) warnings
   return m'
   where
-    -- | The set of names of standard library functions which have runtime wrappers.
-    wrappedFunctions :: Data.Set.Set Name
-    -- | Map from the names of standard library functions to the names of their runtime wrappers.
-    wrappedFunctionNames :: Map Name Name
-    (wrappedFunctions, wrappedFunctionNames) =
-      let names = [ "calloc", "free", "main", "malloc", "realloc" ]
-      in (Data.Set.fromList $ map mkName names,
-          Data.Map.fromList $ map (\n -> (mkName n, mkName ("softboundcets_" ++ n))) names)
-
-    instrumentationPass :: SoftboundCETSPass ()
-    instrumentationPass m' = do
-      rtFuncProtos <- gets (assocs . runtimeFunctionPrototypes)
-      mapM_ emitRuntimeAPIFunctionDecl rtFuncProtos
-      rtWrapperProtos <- gets (assocs . wrapperFunctionPrototypes)
-      mapM_ emitRuntimeAPIFunctionDecl rtWrapperProtos
+    sbcetsPass :: SoftboundCETSPass ()
+    sbcetsPass m' = do
+      mapM_ emitRuntimeAPIFunctionDecl <$> gets (assocs . runtimeFunctionPrototypes)
+      mapM_ emitRuntimeAPIFunctionDecl <$> gets (map snd . assocs . stdlibWrapperPrototypes)
       mapM_ instrumentDefinition $ moduleDefinitions m'
       return ()
-
-    emitRuntimeAPIFunctionDecl :: (String, Type) -> SoftboundCETSPassStep ()
-    emitRuntimeAPIFunctionDecl decl
-      | (fname, (FunctionType retType argTypes _)) <- decl = do
-          _ <- extern (mkName fname) argTypes retType
-          return ()
-      | otherwise = undefined
 
     instrumentDefinition g
       -- Don't instrument empty functions
@@ -273,18 +272,17 @@ instrument blacklist' opts m = do
       -- We do not currently instrument varargs functions
       | (GlobalDefinition f@(Function {})) <- g, snd $ parameters f = emitDefn g
       | (GlobalDefinition f@(Function {})) <- g = do
-          let hasRTWrapper = Data.Set.member (name f) wrappedFunctions
-          shouldIgnore <- ignoredFunction (name f)
-          let shouldInstrument = not shouldIgnore && not hasRTWrapper
+          hasWrapper <- isWrappedFunction $ name f
+          ignore <- isIgnoredFunction (name f)
           shouldRename <- gets $ (Data.Set.member $ name f) . renamingCandidates
-          if shouldInstrument || shouldRename then do
+          if (not ignore && not hasWrapper) || shouldRename then do
             instrumentFunction shouldRename f
           else emitDefn g
       | otherwise = emitDefn g
 
     instrumentFunction shouldRename f
       | (Function {}) <- f = do
-          let name' = if shouldRename then wrappedFunctionNames ! (name f) else name f
+          name' <- if shouldRename then gets (fst . (! (name f)) . stdlibWrapperPrototypes) else return $ name f
           (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
             modify $ \s -> s { globalLockPtr = Nothing
                              , localStackFrameKeyPtr = Nothing
@@ -353,15 +351,11 @@ instrument blacklist' opts m = do
               addr' <- bitcast addr (ptr i8)
               tySize <- sizeof 64 ty
               -- Check the load is spatially in bounds
-              (fname, fproto) <- gets ((!! "__softboundcets_spatial_load_dereference_check") . runtimeFunctionPrototypes)
-              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                        [(base, []), (bound, []), (addr', []), (tySize, [])]
+              _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [base, bound, addr', tySize]
               -- Check the load is temporally in bounds
-              (fname', fproto') <- gets ((!! "__softboundcets_temporal_load_dereference_check") . runtimeFunctionPrototypes)
               lock <- load lockPtr 0
               key <- load keyPtr 0
-              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                        [(lock, []), (key, [])]
+              _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lock, key]
               return ()
             _ -> return ()
 
@@ -378,7 +372,7 @@ instrument blacklist' opts m = do
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname))) opds _ _) <- o = do
         enable <- gets (CLI.instrumentCall . options)
-        ignore <- ignoredFunction fname
+        ignore <- isIgnoredFunction fname
         if (not enable || ignore)
         then emitNamedInst i
         else do
@@ -388,8 +382,11 @@ instrument blacklist' opts m = do
                             filter isPointerOperand $ map fst opds
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
               zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
-              if Data.Set.member fname wrappedFunctions then
-                emitNamedInst $ v := (rewriteCalledFunctionName (wrappedFunctionNames ! fname) o)
+              hasWrapper <- isWrappedFunction fname
+              if hasWrapper
+              then do
+                wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
+                emitNamedInst $ v := (rewriteCalledFunctionName wrapperFunctionName o)
               else emitNamedInst i
               -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
               modify $ \s -> s { basicBlockMetadataTable = foldr ($) (basicBlockMetadataTable s) $ map Data.Map.delete ptrArgs }
@@ -514,7 +511,7 @@ instrument blacklist' opts m = do
       -- We don't need to emit checks for the return value here because it is unused.
       | (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname))) opds _ _) <- o = do
         enable <- gets (CLI.instrumentCall . options)
-        ignore <- ignoredFunction fname
+        ignore <- isIgnoredFunction fname
         if (not enable || ignore)
         then emitNamedInst i
         else do
@@ -524,8 +521,11 @@ instrument blacklist' opts m = do
                             filter isPointerOperand $ map fst opds
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
               zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
-              if Data.Set.member fname wrappedFunctions then
-                emitNamedInst $ Do $ rewriteCalledFunctionName (wrappedFunctionNames ! fname) o
+              hasWrapper <- isWrappedFunction fname
+              if hasWrapper
+              then do
+                wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
+                emitNamedInst $ Do $ rewriteCalledFunctionName wrapperFunctionName o
               else emitNamedInst i
               -- The function could deallocate any of the passed pointers so (conservatively) behave as if it has deallocated all of them
               modify $ \s -> s { basicBlockMetadataTable = foldr ($) (basicBlockMetadataTable s) $ map Data.Map.delete ptrArgs }
@@ -545,24 +545,18 @@ instrument blacklist' opts m = do
                                                                 else gets ((! tgt) . basicBlockMetadataTable)
             emitCheck <- gets (CLI.emitChecks . options)
             when emitCheck $ do
-              (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                        [(tgtBasePtr, []), (tgtBoundPtr, []), (tgtKeyPtr, []), (tgtLockPtr, [])]
+              _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr]
               return ()
             -- Check the store is spatially in bounds
-            (fname, fproto) <- gets ((!! "__softboundcets_spatial_store_dereference_check") . runtimeFunctionPrototypes)
             tgtBase <- load tgtBasePtr 0
             tgtBound <- load tgtBoundPtr 0
             tgtAddr <- bitcast tgt (ptr i8)
             tySize <- sizeof 64 ty
-            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-                      [(tgtBase, []), (tgtBound, []), (tgtAddr, []), (tySize, [])]
+            _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [tgtBase, tgtBound, tgtAddr, tySize]
             -- Check the store is temporally in bounds
-            (fname'', fproto'') <- gets ((!! "__softboundcets_temporal_store_dereference_check") . runtimeFunctionPrototypes)
             tgtKey <- load tgtKeyPtr 0
             tgtLock <- load tgtLockPtr 0
-            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                      [(tgtLock, []), (tgtKey, [])]
+            _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [tgtLock, tgtKey]
             return ()
 
         emitNamedInst i
@@ -579,18 +573,14 @@ instrument blacklist' opts m = do
                                                                   else gets ((! src) . basicBlockMetadataTable)
               emitCheck <- gets (CLI.emitChecks . options)
               when emitCheck $ do
-                (fname'', fproto'') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-                _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto'') $ mkName fname'')
-                          [(srcBasePtr, []), (srcBoundPtr, []), (srcKeyPtr, []), (srcLockPtr, [])]
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [srcBasePtr, srcBoundPtr, srcKeyPtr, srcLockPtr]
                 return ()
               tgtAddr <- bitcast tgt (ptr i8)
               srcBase <- load srcBasePtr 0
               srcBound <- load srcBoundPtr 0
               srcKey <- load srcKeyPtr 0
               srcLock <- load srcLockPtr 0
-              (fname', fproto') <- gets ((!! "__softboundcets_metadata_store") . runtimeFunctionPrototypes)
-              _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                          [(tgtAddr, []), (srcBase, []), (srcBound, []), (srcKey, []), (srcLock, [])]
+              _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgtAddr, srcBase, srcBound, srcKey, srcLock]
               return ()
 
       | otherwise = emitNamedInst i
@@ -617,8 +607,7 @@ instrument blacklist' opts m = do
     emitFirstBlock (BasicBlock n i t) = do
       emitBlockStart n
       -- Set up a handle to the global lock
-      (fname, fproto) <- gets ((!! "__softboundcets_get_global_lock") . runtimeFunctionPrototypes)
-      glp <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname) []
+      glp <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
       modify $ \s -> s { globalLockPtr = Just glp }
       -- Create a lock for local allocations
       emitLocalKeyAndLockCreation
@@ -665,14 +654,10 @@ loadMetadataForAddress :: (MonadState SBCETSState m, MonadIRBuilder m) => Operan
 loadMetadataForAddress addr meta@(basePtr, boundPtr, keyPtr, lockPtr)
   | (LocalReference (PointerType _ _) _) <- addr = do
     addr' <- bitcast addr (ptr i8)
-    (fname, fproto) <- gets ((!! "__softboundcets_metadata_load") . runtimeFunctionPrototypes)
-    _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-              [(addr', []), (basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_load" [addr', basePtr, boundPtr, keyPtr, lockPtr]
     emitCheck <- gets (CLI.emitChecks . options)
     when emitCheck $ do
-      (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
       return ()
     return meta
   | otherwise = error $ "loadMetadataForAddress: expected pointer but saw " ++ (unpack $ ppll addr)
@@ -726,7 +711,7 @@ emitInstrumentationSetup f
             else return []
         | (v := o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) opds _ _) <- o = do
             enable <- gets (CLI.instrumentCall . options)
-            ignore <- ignoredFunction fname
+            ignore <- isIgnoredFunction fname
             if (enable && not ignore)
             then do
               let ptrArgs = filter (not . isFunctionType . pointerReferent . typeOf) $
@@ -741,7 +726,7 @@ emitInstrumentationSetup f
             if enable then return [LocalReference (ptr ty) v] else return []
         | (Do o) <- site, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname@(Name {})))) opds _ _) <- o = do
             enable <- gets (CLI.instrumentCall . options)
-            ignore <- ignoredFunction fname
+            ignore <- isIgnoredFunction fname
             if (enable && not ignore)
             then do
               let ptrArgs = filter (not . isFunctionType . pointerReferent . typeOf) $
@@ -768,9 +753,7 @@ emitLocalKeyAndLockCreation :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSSt
 emitLocalKeyAndLockCreation = do
   keyPtr <- alloca i64 Nothing 8
   lockPtr <- alloca (ptr i8) Nothing 8
-  (fname, fproto) <- gets ((!! "__softboundcets_create_stack_key") . runtimeFunctionPrototypes)
-  _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-            [(lockPtr, []), (keyPtr, [])]
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_create_stack_key" [lockPtr, keyPtr]
   modify $ \s -> s { localStackFrameKeyPtr = Just keyPtr, localStackFrameLockPtr = Just lockPtr }
   return ()
 
@@ -781,25 +764,20 @@ emitLocalKeyAndLockDestruction :: IRBuilderT (IRBuilderT (RWST () [String] SBCET
 emitLocalKeyAndLockDestruction = do
   keyPtr <- gets (fromJust . localStackFrameKeyPtr)
   key <- load keyPtr 0
-  (fname, fproto) <- gets ((!! "__softboundcets_destroy_stack_key") . runtimeFunctionPrototypes)
-  _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-            [(key, [])]
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_destroy_stack_key" [key]
   return ()
 
 -- | Allocate space on the shadow stack for the parameters of an instrumented function we are about to call.
 emitShadowStackAllocation :: (MonadState SBCETSState m, MonadIRBuilder m) => Integer -> m ()
 emitShadowStackAllocation numArgs = do
   numArgs' <- pure $ int32 numArgs
-  (fname, fproto) <- gets ((!! "__softboundcets_allocate_shadow_stack_space") . runtimeFunctionPrototypes)
-  _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname)
-            [(numArgs', [])]
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_allocate_shadow_stack_space" [numArgs']
   return ()
 
 -- | Deallocate the shadow stack space for the instrumented function which just returned.
 emitShadowStackDeallocation :: IRBuilderT (IRBuilderT (RWST () [String] SBCETSState ModuleBuilder)) ()
 emitShadowStackDeallocation = do
-  (fname, fproto) <- gets ((!! "__softboundcets_deallocate_shadow_stack_space") . runtimeFunctionPrototypes)
-  _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto) $ mkName fname) []
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
 
 -- | Load the metadata for a pointer function parameter from the shadow stack.
@@ -807,14 +785,10 @@ emitMetadataLoadFromShadowStack :: (MonadState SBCETSState m, MonadIRBuilder m) 
 emitMetadataLoadFromShadowStack p ix
   | (LocalReference {}) <- p = do
     ix' <- pure $ int32 ix
-    (baseName, baseProto) <- gets((!! "__softboundcets_load_base_shadow_stack") . runtimeFunctionPrototypes)
-    base <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName) [(ix', [])]
-    (boundName, boundProto) <- gets((!! "__softboundcets_load_bound_shadow_stack") . runtimeFunctionPrototypes)
-    bound <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName) [(ix', [])]
-    (keyName, keyProto) <- gets((!! "__softboundcets_load_key_shadow_stack") . runtimeFunctionPrototypes)
-    key <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName) [(ix', [])]
-    (lockName, lockProto) <- gets((!! "__softboundcets_load_lock_shadow_stack") . runtimeFunctionPrototypes)
-    lock <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName) [(ix', [])]
+    base <- emitRuntimeAPIFunctionCall "__softboundcets_load_base_shadow_stack" [ix']
+    bound <- emitRuntimeAPIFunctionCall "__softboundcets_load_bound_shadow_stack" [ix']
+    key <- emitRuntimeAPIFunctionCall "__softboundcets_load_key_shadow_stack" [ix']
+    lock <- emitRuntimeAPIFunctionCall "__softboundcets_load_lock_shadow_stack" [ix']
     newMetadata@(basePtr, boundPtr, keyPtr, lockPtr) <- getOrCreateMetadataStorage p
     store basePtr 8 base
     store boundPtr 8 bound
@@ -846,27 +820,17 @@ emitMetadataStoreToShadowStack callee op ix
                                                   error $ "in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
-        (fname', fproto') <- gets ((!! "__softboundcets_metadata_check") . runtimeFunctionPrototypes)
-        _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') $ mkName fname')
-                  [(basePtr, []), (boundPtr, []), (keyPtr, []), (lockPtr, [])]
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
         return ()
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
       key <- load keyPtr 0
       lock <- load lockPtr 0
-      (baseName, baseProto) <- gets ((!! "__softboundcets_store_base_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr baseProto) $ mkName baseName)
-                [(base, []), (ix', [])]
-      (boundName, boundProto) <- gets ((!! "__softboundcets_store_bound_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr boundProto) $ mkName boundName)
-                [(bound, []), (ix', [])]
-      (keyName, keyProto) <- gets ((!! "__softboundcets_store_key_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr keyProto) $ mkName keyName)
-                [(key, []), (ix', [])]
-      (lockName, lockProto) <- gets ((!! "__softboundcets_store_lock_shadow_stack") .runtimeFunctionPrototypes)
-      _ <- call (ConstantOperand $ Const.GlobalReference (ptr lockProto) $ mkName lockName)
-                [(lock, []), (ix', [])]
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
       return ()
   | otherwise = undefined
 
