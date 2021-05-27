@@ -419,36 +419,24 @@ instrument blacklist' opts m = do
             when (isJust ty') $ do
               let gepResultPtr = LocalReference (ptr $ fromJust ty') v
               modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert gepResultPtr meta' $ basicBlockMetadataTable s }
-              -- The pointer created by getelementptr aliases a pointer with allocated metadata storage
+              -- The pointer created by getelementptr shares metadata storage with the parent pointer
               modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
-          -- If inspectPointer returns Nothing, the pointer is either safe or completely unknown. In either case, we can do nothing further.
-          -- Treating it as safe means we won't try to generate further checks for it, which are useless in either case.
           Nothing -> modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
         emitNamedInst i
 
-      | (BitCast addr@(LocalReference (PointerType ty' _) n) ty _) <- o = do
+      | (BitCast addr ty _) <- o = do
         enable <- gets (CLI.instrumentBitcast . options)
         if not enable
         then emitNamedInst i
         else do
-          when (not $ isFunctionType ty') $ do
-            haveBlockMetadata <- gets ((Data.Map.member addr) . basicBlockMetadataTable)
-            haveStackMetadata <- gets ((Data.Map.member addr) . functionMetadataTable)
-            unsafe <- gets (not . Data.Set.member n . safePointers)
-            when (haveBlockMetadata || haveStackMetadata) $ do
-              let newPtr = LocalReference ty v
-              oldMetadata <- if haveStackMetadata
-                             then gets ((! addr) . functionMetadataTable)
-                             else gets ((! addr) . basicBlockMetadataTable)
-              if haveStackMetadata
-              then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr oldMetadata $ functionMetadataTable s }
-              else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr oldMetadata $ basicBlockMetadataTable s }
-              if not unsafe
-              then modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
-              else return ()
-              -- The pointer created by bitcast aliases a pointer with allocated metadata storage
-              modify $ \s -> s { metadataStorage = Data.Map.insert newPtr oldMetadata $ metadataStorage s }
-
+          meta <- inspectPointer addr
+          case meta of
+            (Just (_, meta')) -> do
+              let bitcastResultPtr = LocalReference ty v
+              modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert bitcastResultPtr meta' $ basicBlockMetadataTable s }
+              -- The pointer created by bitcast shares metadata storage with the parent pointer
+              modify $ \s -> s { metadataStorage = Data.Map.insert bitcastResultPtr meta' $ metadataStorage s }
+            Nothing -> modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
           emitNamedInst i
 
       | (Select cond tval@(LocalReference (PointerType ty _) tn) fval@(LocalReference _ fn) _) <- o = do
