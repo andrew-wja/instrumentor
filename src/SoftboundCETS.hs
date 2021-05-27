@@ -78,9 +78,9 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                --  This is because it's always possible to instrument stack accesses in a way that preserves SSA form without doing any extra analysis.
                                , options :: CLI.Options
                                -- ^ The command line options are stored for inspection.
-                               , current :: Maybe Global
+                               , currentFunction :: Maybe Global
                                -- ^ The current function we are processing (needed for decent error reporting).
-                               , safe :: Data.Set.Set Name
+                               , safePointers :: Data.Set.Set Name
                                -- ^ The set of known safe pointers.
                                , blacklist :: Data.Set.Set Name
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
@@ -162,8 +162,8 @@ inspectPointer :: (MonadState SBCETSState m, MonadWriter [String] m, MonadModule
 inspectPointer p
   | (LocalReference (PointerType ty _) _) <- p, isFunctionType ty = return Nothing
   | (LocalReference (PointerType ty _) n) <- p = do
-      unsafe <- gets (not . Data.Set.member n . safe)
-      if (not unsafe) then return Nothing
+      safe <- gets (Data.Set.member n . safePointers)
+      if safe then return Nothing
       else do
         haveBlockMetadata <- gets ((Data.Map.member p) . basicBlockMetadataTable)
         haveStackMetadata <- gets ((Data.Map.member p) . functionMetadataTable)
@@ -282,8 +282,8 @@ instrument blacklist' opts m = do
             modify $ \s -> s { globalLockPtr = Nothing
                              , localStackFrameKeyPtr = Nothing
                              , localStackFrameLockPtr = Nothing
-                             , current = Just f
-                             , safe = Data.Set.empty
+                             , currentFunction = Just f
+                             , safePointers = Data.Set.empty
                              , basicBlockMetadataTable = Data.Map.empty
                              , functionMetadataTable = Data.Map.empty
                              , dontCareMetadata = Nothing
@@ -299,17 +299,34 @@ instrument blacklist' opts m = do
 
     instrumentBlocks bs
       | [] <- bs = return ()
-      | (first:[]) <- bs = emitFirstBlock first
+      | (first:[]) <- bs = instrumentFirstBlock first
       | (first:blocks) <- bs = do
-          emitFirstBlock first
-          mapM_ emitBlock blocks
+          instrumentFirstBlock first
+          mapM_ instrumentBlock blocks
+
+    instrumentFirstBlock (BasicBlock n i t) = do
+      emitBlockStart n
+      -- Set up a handle to the global lock
+      glp <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
+      modify $ \s -> s { globalLockPtr = Just glp }
+      -- Create a lock for local allocations
+      emitLocalKeyAndLockCreation
+      mapM_ instrumentInst i
+      instrumentTerm t
+
+    instrumentBlock (BasicBlock n i t) = do
+      saved <- gets basicBlockMetadataTable
+      emitBlockStart n
+      mapM_ instrumentInst i
+      instrumentTerm t
+      modify $ \s -> s { basicBlockMetadataTable = saved }
 
     instrumentInst i@(v := o)
       | (Alloca ty count _ _) <- o = do
         -- We emit the alloca first because we reference the result in the instrumentation
         emitNamedInst i
         -- The address of a stack allocation is always safe
-        modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+        modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
         enable <- gets (CLI.instrumentStack . options)
         when enable $ do
           let resultPtr = LocalReference (ptr ty) v
@@ -392,28 +409,21 @@ instrument blacklist' opts m = do
             (UnName {}) -> do -- Calling a computed function pointer
               emitNamedInst i
 
-      | (GetElementPtr _ addr@(LocalReference (PointerType ty _) n) ixs _) <- o = do
-        when (not $ isFunctionType ty) $ do
-          haveBlockMetadata <- gets ((Data.Map.member addr) . basicBlockMetadataTable)
-          haveStackMetadata <- gets ((Data.Map.member addr) . functionMetadataTable)
-          unsafe <- gets (not . Data.Set.member n . safe)
-          when (haveBlockMetadata || haveStackMetadata) $ do
+      | (GetElementPtr _ addr ixs _) <- o = do
+        meta <- inspectPointer addr
+        case meta of
+          (Just (_, meta')) -> do
             ty' <- typeIndex (typeOf addr) ixs
-            -- If we cannot compute the type of the indexed entity, don't instrument this pointer to it.
-            -- This can happen in the case of opaque structure types. The original softboundcets code also bails here.
+            -- If we cannot compute the ultimate type of the pointer after indexing, don't instrument it.
+            -- This can happen in the case of opaque structure types. https://llvm.org/docs/LangRef.html#opaque-structure-types
             when (isJust ty') $ do
-              let newPtr = LocalReference (ptr $ fromJust ty') v
-              oldMetadata <- if haveStackMetadata
-                             then gets ((! addr) . functionMetadataTable)
-                             else gets ((! addr) . basicBlockMetadataTable)
-              if haveStackMetadata
-              then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr oldMetadata $ functionMetadataTable s }
-              else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr oldMetadata $ basicBlockMetadataTable s }
-              if not unsafe
-              then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
-              else return ()
+              let gepResultPtr = LocalReference (ptr $ fromJust ty') v
+              modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert gepResultPtr meta' $ basicBlockMetadataTable s }
               -- The pointer created by getelementptr aliases a pointer with allocated metadata storage
-              modify $ \s -> s { metadataStorage = Data.Map.insert newPtr oldMetadata $ metadataStorage s }
+              modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
+          -- If inspectPointer returns Nothing, the pointer is either safe or completely unknown. In either case, we can do nothing further.
+          -- Treating it as safe means we won't try to generate further checks for it, which are useless in either case.
+          Nothing -> modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
         emitNamedInst i
 
       | (BitCast addr@(LocalReference (PointerType ty' _) n) ty _) <- o = do
@@ -424,7 +434,7 @@ instrument blacklist' opts m = do
           when (not $ isFunctionType ty') $ do
             haveBlockMetadata <- gets ((Data.Map.member addr) . basicBlockMetadataTable)
             haveStackMetadata <- gets ((Data.Map.member addr) . functionMetadataTable)
-            unsafe <- gets (not . Data.Set.member n . safe)
+            unsafe <- gets (not . Data.Set.member n . safePointers)
             when (haveBlockMetadata || haveStackMetadata) $ do
               let newPtr = LocalReference ty v
               oldMetadata <- if haveStackMetadata
@@ -434,7 +444,7 @@ instrument blacklist' opts m = do
               then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr oldMetadata $ functionMetadataTable s }
               else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr oldMetadata $ basicBlockMetadataTable s }
               if not unsafe
-              then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+              then modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
               else return ()
               -- The pointer created by bitcast aliases a pointer with allocated metadata storage
               modify $ \s -> s { metadataStorage = Data.Map.insert newPtr oldMetadata $ metadataStorage s }
@@ -448,8 +458,8 @@ instrument blacklist' opts m = do
         haveBlockMetadataF <- gets ((Data.Map.member fval) . basicBlockMetadataTable)
         haveStackMetadataF <- gets ((Data.Map.member fval) . functionMetadataTable)
         let haveMetadata = (haveBlockMetadataT || haveStackMetadataT) && (haveBlockMetadataF || haveStackMetadataF)
-        unsafeT <- gets (not . Data.Set.member tn . safe)
-        unsafeF <- gets (not . Data.Set.member fn . safe)
+        unsafeT <- gets (not . Data.Set.member tn . safePointers)
+        unsafeF <- gets (not . Data.Set.member fn . safePointers)
 
         when ((not $ isFunctionType ty) && haveMetadata) $ do
           tMeta <- if haveStackMetadataT
@@ -468,7 +478,7 @@ instrument blacklist' opts m = do
           then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr newMeta $ functionMetadataTable s }
           else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr newMeta $ basicBlockMetadataTable s }
           if not (unsafeT && unsafeF)
-          then modify $ \s -> s { safe = Data.Set.insert v $ safe s }
+          then modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
           else return ()
           -- The pointer created by select aliases a pointer with allocated metadata storage
           modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
@@ -496,7 +506,7 @@ instrument blacklist' opts m = do
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
           let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
-          -- The pointer created by phi is only assumed valid within the current basic block
+          -- The pointer created by phi is only assumed valid within the currentFunction basic block
           modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr newMeta $ basicBlockMetadataTable s }
 
       | otherwise = emitNamedInst i
@@ -533,7 +543,7 @@ instrument blacklist' opts m = do
         when (enable && (not $ isFunctionType ty)) $ do
           haveTargetBlockMetadata <- gets ((Data.Map.member tgt) . basicBlockMetadataTable)
           haveTargetStackMetadata <- gets ((Data.Map.member tgt) . functionMetadataTable)
-          unsafe <- gets (not . Data.Set.member n . safe)
+          unsafe <- gets (not . Data.Set.member n . safePointers)
           when (unsafe && (haveTargetBlockMetadata || haveTargetStackMetadata)) $ do
             (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- if haveTargetStackMetadata
                                                                 then gets ((! tgt) . functionMetadataTable)
@@ -593,34 +603,6 @@ instrument blacklist' opts m = do
           emitNamedTerm i
       -- Not a return instruction, don't instrument
       | otherwise = emitNamedTerm i
-
-    emitFirstBlock (BasicBlock n i t) = do
-      emitBlockStart n
-      -- Set up a handle to the global lock
-      glp <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
-      modify $ \s -> s { globalLockPtr = Just glp }
-      -- Create a lock for local allocations
-      emitLocalKeyAndLockCreation
-      mapM_ instrumentInst i
-      instrumentTerm t
-
-    emitBlock (BasicBlock n i t) = do
-      saved <- gets basicBlockMetadataTable
-      emitBlockStart n
-      mapM_ instrumentInst i
-      instrumentTerm t
-      modify $ \s -> s { basicBlockMetadataTable = saved }
-
-    emitNamedTerm t = do
-      modifyBlock $ \bb -> bb
-        { partialBlockTerm = Just t }
-
-    emitNamedInst (n := i) = do
-      modifyBlock $ \bb -> bb
-        { partialBlockInstrs = partialBlockInstrs bb `snoc` (n := i) }
-
-    emitNamedInst (Do i) = do
-      emitInstrVoid i
 
 -- | Helper to rewrite the called function symbol (for example, to a wrapper function symbol) at a callsite.
 rewriteCalledFunctionName :: Name -> Instruction -> Instruction
@@ -755,7 +737,7 @@ emitLocalKeyAndLockCreation = do
   return ()
 
 -- | Invalidate the local key; We do this just prior to returning from the function.
---   Subsequent use of a leaked stack-allocated variable from inside the current function
+--   Subsequent use of a leaked stack-allocated variable from inside the currentFunction function
 --   will cause a runtime error with a key mismatch.
 emitLocalKeyAndLockDestruction :: (MonadState SBCETSState m, MonadIRBuilder m) => m ()
 emitLocalKeyAndLockDestruction = do
@@ -813,7 +795,7 @@ emitMetadataStoreToShadowStack callee op ix
                                                   newMetadata <- getOrCreateMetadataStorage op
                                                   loadMetadataForAddress op newMetadata
                                                 else do
-                                                  func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . current)
+                                                  func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . currentFunction)
                                                   error $ "in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
       emitCheck <- gets (CLI.emitChecks . options)
       when emitCheck $ do
@@ -830,6 +812,20 @@ emitMetadataStoreToShadowStack callee op ix
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
       return ()
   | otherwise = undefined
+
+-- | Code generation helper function
+emitNamedTerm :: MonadIRBuilder m => Named Terminator -> m ()
+emitNamedTerm t = do
+  modifyBlock $ \bb -> bb
+    { partialBlockTerm = Just t }
+
+-- | Code generation helper function
+emitNamedInst :: MonadIRBuilder m => Named Instruction -> m ()
+emitNamedInst i
+  | (_ := _) <- i = do
+      modifyBlock $ \bb -> bb
+        { partialBlockInstrs = partialBlockInstrs bb `snoc` i }
+  | (Do o) <- i = emitInstrVoid o
 
 -- | Helper predicate.
 isConstantOperand :: Operand -> Bool
