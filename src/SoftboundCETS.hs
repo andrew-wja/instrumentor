@@ -667,6 +667,7 @@ instrument blacklist' opts m = do
           if haveStackMetadataT && haveStackMetadataF
           then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr newMeta $ functionMetadataTable s }
           else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr newMeta $ basicBlockMetadataTable s }
+          -- We always have to allocate storage for the pointer returned by select, even if both input pointers are safe (because the condition is a runtime condition).
           if not (unsafeT && unsafeF)
           then modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
           else return ()
