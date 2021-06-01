@@ -19,11 +19,12 @@ of the base address and exclusive of the bound address.
 
 The `key` is an integer value which is unique to each allocated object (on both
 the stack and the heap), and the `lock` is a pointer to a disjoint metadata
-space, where the key value resides. When a pointer is used, the `lock` and
-`key` value associated with the pointer are used to check that the key value in
-the disjoint metadata space still matches the key associated with the pointer.
-Since deallocating an object sets the key in disjoint metadata space to `0`,
-and `0` is a reserved key value, uses of pointers after free can be detected.
+space, where the key value resides. When a pointer is dereferenced, the `lock`
+and `key` value associated with the pointer are used to check that the key
+value in the disjoint metadata space still matches the key associated with the
+pointer. Since deallocating an object sets the key in disjoint metadata space
+to `0`, and `0` is a reserved key value, uses of pointers after free can be
+detected.
 
 Additionally, each stack frame is assigned a unique integer `key` and a `lock`
 from the same key pool as the allocation keys. When a function creates
@@ -44,9 +45,9 @@ back to the caller on the shadow stack.
 
 ## How SoftboundCETS Works In Practice
 
-There are three disjoint metadata spaces: the metadata space for function
-arguments (aka "shadow stack"), the metadata space for stack frame keys,
-and the general metadata space for allocations.
+There are three disjoint metadata spaces: the metadata space for pointer
+function arguments (aka "shadow stack"), the metadata space for stack frame
+keys, and the general metadata space for pointers stored to memory.
 
 However, there is also a fourth "space" where metadata lives: in local
 variables while it is being used to perform checks. While the three disjoint

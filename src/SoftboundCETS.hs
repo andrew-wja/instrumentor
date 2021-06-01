@@ -76,18 +76,21 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The symbol table mapping pointers to stack allocated entities to their metadata.
                                --  'functionMetadataTable' only needs saving and restoring around function entry and exit.
                                --  This is because it's always possible to instrument stack accesses in a way that preserves SSA form without doing any extra analysis.
+                               , globalMetadataTable :: Map Operand Metadata
+                               -- ^ The symbol table mapping pointers to global variables to their metadata.
+                               --   'globalMetadataTable' does not need saving and restoring because global variables have infinite lifetimes.
                                , options :: CLI.Options
                                -- ^ The command line options are stored for inspection.
                                , currentFunction :: Maybe Global
                                -- ^ The current function we are processing (needed for decent error reporting).
                                , safePointers :: Data.Set.Set Name
                                -- ^ The set of known safe pointers.
+                               --   'safePointers' needs to be saved and restored around function entry and exit so we don't mistakenly treat
+                               --   pointers with the same names in different functions as safe. Outside a function, 'safePointers' contains the names of global variables.
                                , blacklist :: Data.Set.Set Name
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                , dontCareMetadata :: Maybe Metadata
                                -- ^ Metadata that can never cause any runtime checks to fail.
-                               , nullMetadata :: Maybe Metadata
-                               -- ^ Metadata for the null pointer (used for zero initialized pointers).
                                , metadataStorage :: Map Operand Metadata
                                -- ^ A 'Map' from the SSA register names of pointers to the metadata storage allocated to hold their metadata.
                                }
@@ -97,10 +100,10 @@ emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty
                                Data.Map.empty Data.Map.empty
-                               Data.Map.empty Data.Map.empty
+                               Data.Map.empty Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
-                               Nothing Nothing Data.Map.empty
+                               Nothing Data.Map.empty
 
 -- | The initial 'SBCETSState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
@@ -175,7 +178,15 @@ inspectPointer p
   {-
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = return Nothing
+  -}
+  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = do
+      safe <- gets (Data.Set.member n . safePointers)
+      if safe then return Nothing
+      else do
+        tell ["inspectPointer: unsupported pointer, using DC metadata " ++ (unpack $ ppll p)]
+        meta <- gets (fromJust . dontCareMetadata)
+        return $ Just (ty, meta)
+  {-
   | (ConstantOperand (Const.GetElementPtr _ addr ixs)) <- p = do
       ty <- typeIndex (typeOf addr) (map ConstantOperand ixs)
       return Nothing
@@ -188,48 +199,13 @@ inspectPointer p
       ty <- typeIndex (typeOf agg) (map (ConstantOperand . Const.Int 32 . fromIntegral) ixs)
       return Nothing
   -}
-  | otherwise = do
-      tell ["inspectPointer: unsupported pointer " ++ (unpack $ ppll p)]
-      return Nothing
-
--- | When we encounter a global definition, we need to allocate metadata for
---   it if it is not a function or function alias. This is because all globals
---   in LLVM implicitly have their address taken; global definitions define a
---   *pointer* to an entity, just like 'alloca' definitions.
-createMetadataForGlobal :: (MonadModuleBuilder m, MonadIRBuilder m, MonadState SBCETSState m) => Global -> m ()
-createMetadataForGlobal g
-  | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_ctors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-ctors-global-variable
-  | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_dtors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-dtors-global-variable
-  | (GlobalVariable {}) <- g, section g == (Just $ fromString "llvm.metadata")  = return () -- LLVM puts metadata in a specially named section
-  | (GlobalVariable {}) <- g, isNothing $ initializer g                         = return () -- Uninitialized globals do not get metadata
-  | (GlobalVariable {}) <- g = do
-      let ty = typeOf $ fromJust $ initializer g
-      let gRef = ConstantOperand $ Const.GlobalReference (ptr ty) (name g)
-      case ty of
-        (PointerType {}) -> do
-          if (not $ Helpers.isFunctionType $ pointerReferent ty)
-          then do
-            addr <- bitcast gRef (ptr i8)
-            base <- gep gRef [int64 0]
-            base' <- bitcast base (ptr i8)
-            bound <- gep gRef [int64 1]
-            bound' <- bitcast bound (ptr i8)
-            let key = ConstantOperand $ Const.Int 64 1
-            glp <- gets (fromJust . globalLockPtr)
-            lock <- load glp 0
-            (fname', fproto') <- gets ((!! (mkName "__softboundcets_metadata_store")) . runtimeFunctionPrototypes)
-            _ <- call (ConstantOperand $ Const.GlobalReference (ptr fproto') fname')
-                        [(addr, []), (base', []), (bound', []), (key, []), (lock, [])]
-            return ()
-          else return ()
-
-        (StructureType {}) -> return ()
-        (ArrayType {}) -> return ()
-        (IntegerType {}) -> return ()
-        (FloatingPointType {}) -> return ()
-        (VectorType {}) -> return ()
-        _ -> return ()
-  | otherwise = error $ "createMetadataForGlobal: expected global variable, but got: " ++ (unpack $ ppll g)
+  | otherwise =
+      case (typeOf p) of
+        (PointerType ty _) -> do
+          tell ["inspectPointer: unsupported pointer, using DC metadata " ++ (unpack $ ppll p)]
+          meta <- gets (fromJust . dontCareMetadata)
+          return $ Just (ty, meta)
+        _ -> error $ "inspectPointer: argument is not a pointer " ++ (unpack $ ppll p)
 
 -- | Emit the declaration of a runtime API function.
 emitRuntimeAPIFunctionDecl :: (MonadModuleBuilder m) => (Name, Type) -> m ()
@@ -290,16 +266,6 @@ emitInstrumentationSetup f
     dcMetadata <- getOrCreateMetadataStorage nullPtr
     _ <- loadMetadataForAddress nullPtr dcMetadata
     modify $ \s -> s { dontCareMetadata = Just dcMetadata }
-    -- Create the null pointer metadata
-    nullBasePtr <- alloca (ptr i8) Nothing 8
-    nullBoundPtr <- alloca (ptr i8) Nothing 8
-    nullKeyPtr <- alloca i64 Nothing 8
-    nullLockPtr <- alloca (ptr i8) Nothing 8
-    store nullBasePtr 8 nullPtr
-    store nullBoundPtr 8 nullPtr
-    store nullKeyPtr 8 (ConstantOperand $ Const.Int 64 1)
-    store nullLockPtr 8 nullPtr
-    modify $ \s -> s { nullMetadata = Just (nullBasePtr, nullBoundPtr, nullKeyPtr, nullLockPtr) }
     -- Collect all metadata allocation sites so we can allocate local variables for metadata ahead of time
     metadataAllocationSites <- liftM (nub . sort . concat) $ mapM collectMetadataAllocationSites $ basicBlocks f
     mapM_ createMetadataStackSlots metadataAllocationSites
@@ -475,26 +441,41 @@ instrument blacklist' opts m = do
           if (not ignore && not hasWrapper) || name f == mkName "main" then do
             instrumentFunction f
           else emitDefn g
+      | (GlobalDefinition gv@(GlobalVariable {})) <- g = do
+          emitDefn g
+          instrumentGlobalVariable gv
       | otherwise = emitDefn g
+
+    instrumentGlobalVariable g
+      | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_ctors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-ctors-global-variable
+      | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_dtors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-dtors-global-variable
+      | (GlobalVariable {}) <- g, section g == (Just $ fromString "llvm.metadata")  = return () -- LLVM puts metadata in a specially named section
+      | (GlobalVariable {}) <- g, isNothing $ initializer g                         = return () -- Uninitialized globals do not get metadata
+      | (GlobalVariable {}) <- g = do
+          let gName = name g
+          -- The address of a global variable is always safe
+          modify $ \s -> s { safePointers = Data.Set.insert gName $ safePointers s }
+          -- TODO: we should calculate the metadata for this global here and insert global variable definitions.
+          -- However, right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip this for testing.
+      | otherwise = error $ "instrumentGlobalVariable: expected global variable, but got: " ++ (unpack $ ppll g)
 
     instrumentFunction f
       | (Function {}) <- f = do
           let name' = if name f == mkName "main" then mkName "softboundcets_main" else name f
           (_, blocks) <- runIRBuilderT emptyIRBuilder { builderNameSuggestion = Just $ fromString "sbcets" } $ do
+            safePointers' <- gets safePointers
             modify $ \s -> s { globalLockPtr = Nothing
                              , localStackFrameKeyPtr = Nothing
                              , localStackFrameLockPtr = Nothing
                              , currentFunction = Just f
-                             , safePointers = Data.Set.empty
                              , basicBlockMetadataTable = Data.Map.empty
                              , functionMetadataTable = Data.Map.empty
                              , dontCareMetadata = Nothing
-                             , nullMetadata = Nothing
                              , metadataStorage = Data.Map.empty
                              }
             emitInstrumentationSetup f
             instrumentBlocks $ basicBlocks f
-            return ()
+            modify $ \s -> s { safePointers = safePointers' }
           emitDefn $ GlobalDefinition $ f { name = name', basicBlocks = blocks }
           return ()
       | otherwise = undefined
