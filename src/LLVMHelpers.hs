@@ -43,11 +43,6 @@ isLocalReference (LocalReference {}) = True
 isLocalReference _ = False
 
 -- | Helper predicate.
-isPointerOperand :: Operand -> Bool
-isPointerOperand (LocalReference (PointerType {}) _) = True
-isPointerOperand _ = False
-
--- | Helper predicate.
 isPointerType :: Type -> Bool
 isPointerType (PointerType {}) = True
 isPointerType _ = False
