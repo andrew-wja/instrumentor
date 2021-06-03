@@ -175,19 +175,15 @@ inspectPointer p
         then error $ "inspectPointer: have conflicting basic-block scope and function-scope metadata for pointer: " ++ (unpack $ ppll p)
         else if haveStackMetadata
         then gets (Just . (ty,) . (! p) . functionMetadataTable)
-        else gets (Just . (ty,) . (! p) . basicBlockMetadataTable)
+        else if haveBlockMetadata
+        then gets (Just . (ty,) . (! p) . basicBlockMetadataTable)
+        else do
+          tell ["inspectPointer: no metadata for pointer " ++ (unpack $ ppll p)]
+          return Nothing
   {-
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = return Nothing
-  -}
-  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = do
-      safe <- gets (Data.Set.member n . safePointers)
-      if safe then return Nothing
-      else do
-        tell ["inspectPointer: unsupported pointer, using DC metadata " ++ (unpack $ ppll p)]
-        meta <- gets (fromJust . dontCareMetadata)
-        return $ Just (ty, meta)
-  {-
+  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = return Nothing
   | (ConstantOperand (Const.GetElementPtr _ addr ixs)) <- p = do
       ty <- typeIndex (typeOf addr) (map ConstantOperand ixs)
       return Nothing
@@ -392,32 +388,11 @@ emitMetadataLoadFromShadowStack p ix
   | otherwise = undefined
 
 -- | Store the metadata for a pointer on the shadow stack at the specified position.
-emitMetadataStoreToShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m) => Maybe Name -> Operand -> Integer -> m ()
-emitMetadataStoreToShadowStack callee op ix
-  | (LocalReference (PointerType {}) _) <- op = do
-      -- TODO: Switch to using 'inspectPointer' here.
-      haveBlockMetadata <- gets ((Data.Map.member op) . basicBlockMetadataTable)
-      haveStackMetadata <- gets ((Data.Map.member op) . functionMetadataTable)
-      (basePtr, boundPtr, keyPtr, lockPtr) <- if (haveBlockMetadata || haveStackMetadata)
-                                              then
-                                                if haveStackMetadata
-                                                then gets ((! op) . functionMetadataTable)
-                                                else gets ((! op) . basicBlockMetadataTable)
-                                              else do
-                                                tell ["in function " ++ (unpack $ ppll callee) ++ ": metadata reload for killed pointer " ++ (unpack $ ppll op)]
-                                                isAllocated <- gets ((Data.Map.member op) . metadataStorage)
-                                                if isAllocated
-                                                then do
-                                                  newMetadata <- getOrCreateMetadataStorage op
-                                                  loadMetadataForAddress op newMetadata
-                                                  return newMetadata
-                                                else do
-                                                  func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . currentFunction)
-                                                  error $ "in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll op)
-      emitCheck <- gets (CLI.emitChecks . options)
-      when emitCheck $ do
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
-        return ()
+emitMetadataStoreToShadowStack :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m) => Maybe Name -> Operand -> Integer -> m ()
+emitMetadataStoreToShadowStack callee pointer ix = do
+  meta <- inspectPointer pointer
+  case meta of
+    (Just (_, (basePtr, boundPtr, keyPtr, lockPtr))) -> do
       ix' <- pure $ int32 ix
       base <- load basePtr 0
       bound <- load boundPtr 0
@@ -428,20 +403,17 @@ emitMetadataStoreToShadowStack callee op ix
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
       return ()
-  | (ConstantOperand {}) <- op = do
-      -- If asked to store metadata for a constant pointer expression or pointer to global variable to the shadow stack, store the don't-care metadata instead.
-      (dcBasePtr, dcBoundPtr, dcKeyPtr, dcLockPtr) <- gets (fromJust . dontCareMetadata)
-      ix' <- pure $ int32 ix
-      base <- load dcBasePtr 0
-      bound <- load dcBoundPtr 0
-      key <- load dcKeyPtr 0
-      lock <- load dcLockPtr 0
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
-      return ()
-  | otherwise = undefined
+    Nothing -> do
+      isAllocated <- gets ((Data.Map.member pointer) . metadataStorage)
+      if isAllocated
+      then do
+        tell ["in function " ++ (unpack $ ppll callee) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll pointer)]
+        newMetadata <- getOrCreateMetadataStorage pointer
+        loadMetadataForAddress pointer newMetadata
+        return ()
+      else do
+        func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . currentFunction)
+        error $ "in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll pointer)
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
