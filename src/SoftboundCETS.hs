@@ -81,10 +81,10 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The command line options are stored for inspection.
                                , currentFunction :: Maybe Global
                                -- ^ The current function we are processing (needed for decent error reporting).
-                               , safePointers :: Data.Set.Set Name
+                               , safePointers :: Data.Set.Set Operand
                                -- ^ The set of known safe pointers.
                                --   'safePointers' needs to be saved and restored around function entry and exit so we don't mistakenly treat
-                               --   pointers with the same names in different functions as safe. Outside a function, 'safePointers' contains the names of global variables.
+                               --   pointers with the same names in different functions as safe. Outside a function, 'safePointers' contains global variables.
                                , blacklist :: Data.Set.Set Name
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                , dontCareMetadata :: Maybe Metadata
@@ -162,23 +162,19 @@ isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapper
 inspectPointer :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, Metadata))
 inspectPointer p
   | (LocalReference (PointerType ty _) _) <- p, Helpers.isFunctionType ty = return Nothing
-  | (LocalReference (PointerType ty _) n) <- p = do
-      safe <- gets (Data.Set.member n . safePointers)
+  | (LocalReference (PointerType ty _) _) <- p = do
       fname <- gets (name . fromJust . currentFunction)
-      if safe
-      then return Nothing
+      haveBlockMetadata <- gets ((Data.Map.member p) . basicBlockMetadataTable)
+      haveStackMetadata <- gets ((Data.Map.member p) . functionMetadataTable)
+      if (haveBlockMetadata && haveStackMetadata)
+      then error $ "inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": have conflicting basic-block scope and function-scope metadata for pointer: " ++ (unpack $ ppll p)
+      else if haveStackMetadata
+      then gets (Just . (ty,) . (! p) . functionMetadataTable)
+      else if haveBlockMetadata
+      then gets (Just . (ty,) . (! p) . basicBlockMetadataTable)
       else do
-        haveBlockMetadata <- gets ((Data.Map.member p) . basicBlockMetadataTable)
-        haveStackMetadata <- gets ((Data.Map.member p) . functionMetadataTable)
-        if (haveBlockMetadata && haveStackMetadata)
-        then error $ "inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": have conflicting basic-block scope and function-scope metadata for pointer: " ++ (unpack $ ppll p)
-        else if haveStackMetadata
-        then gets (Just . (ty,) . (! p) . functionMetadataTable)
-        else if haveBlockMetadata
-        then gets (Just . (ty,) . (! p) . basicBlockMetadataTable)
-        else do
-          tell ["inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": no metadata for pointer " ++ (unpack $ ppll p)]
-          return Nothing
+        tell ["inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": no metadata for pointer " ++ (unpack $ ppll p)]
+        return Nothing
   {-
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = return Nothing
@@ -195,12 +191,13 @@ inspectPointer p
       ty <- typeIndex (typeOf agg) (map (ConstantOperand . Const.Int 32 . fromIntegral) ixs)
       return Nothing
   -}
-  | otherwise =
+  | otherwise = do
+      fname <- gets (name . fromJust . currentFunction)
       case (typeOf p) of
         (PointerType {}) -> do
-          tell ["inspectPointer: unsupported pointer " ++ (unpack $ ppll p)]
+          tell ["inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": unsupported pointer " ++ (unpack $ ppll p)]
           return Nothing
-        _ -> error $ "inspectPointer: argument is not a pointer " ++ (unpack $ ppll p)
+        _ -> error $ "inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": argument is not a pointer " ++ (unpack $ ppll p)
 
 -- | Allocate local variables to hold the metadata for the given pointer.
 allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
@@ -391,24 +388,35 @@ emitMetadataStoreToShadowStack callee p ix = do
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
       return ()
-    Nothing -> do
-      (basePtr, boundPtr, keyPtr, lockPtr) <- emitRuntimeMetadataLoad p
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
-      return ()
+    Nothing -> do -- Either the metadata has been killed or we are dealing with a non LocalReference pointer.
       isAllocated <- gets ((Data.Map.member p) . metadataStorage)
-      if isAllocated
-      then tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll callee) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll p)]
+      fname <- gets (name . fromJust . currentFunction)
+      if (isAllocated || (not $ Helpers.isLocalReference p)) -- We can get the metadata
+      then do
+        if isJust callee
+        then
+          if isAllocated
+          then tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)]
+          else tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)]
+        else
+          if isAllocated
+          then tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll p) ++ " being returned"]
+          else tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (unpack $ ppll p) ++ " being returned"]
+        (basePtr, boundPtr, keyPtr, lockPtr) <- emitRuntimeMetadataLoad p
+        ix' <- pure $ int32 ix
+        base <- load basePtr 0
+        bound <- load boundPtr 0
+        key <- load keyPtr 0
+        lock <- load lockPtr 0
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
+        return ()
       else do
-        func <- if isJust callee then return (fromJust callee) else gets (name . fromJust . currentFunction)
-        tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll func) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll p) ++ ", using don't-care metadata"]
+        if isJust callee
+        then error $ "emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)
+        else error $ "emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll p) ++ " being returned"
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -450,8 +458,9 @@ instrument blacklist' opts m = do
       | (GlobalVariable {}) <- g, isNothing $ initializer g                         = return () -- Uninitialized globals do not get metadata
       | (GlobalVariable {}) <- g = do
           let gName = name g
+          let gType = ptr $ typeOf $ fromJust $ initializer g
           -- The address of a global variable is always safe
-          modify $ \s -> s { safePointers = Data.Set.insert gName $ safePointers s }
+          modify $ \s -> s { safePointers = Data.Set.insert (ConstantOperand $ Const.GlobalReference gType gName) $ safePointers s }
           -- TODO: we should calculate the metadata for this global here, emit global variable definitions, and update 'globalMetadataTable'.
           -- However, right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip this for testing.
       | otherwise = error $ "instrumentGlobalVariable: expected global variable, but got: " ++ (unpack $ ppll g)
@@ -523,11 +532,11 @@ instrument blacklist' opts m = do
       | (Alloca ty count _ _) <- o = do
         -- We emit the alloca first because we reference the result in the instrumentation
         Helpers.emitNamedInst i
-        -- The address of a stack allocation is always safe
-        modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
+        let resultPtr = LocalReference (ptr ty) v
+          -- The address of a stack allocation is always safe
+        modify $ \s -> s { safePointers = Data.Set.insert resultPtr $ safePointers s }
         enable <- gets (CLI.instrumentStack . options)
         when enable $ do
-          let resultPtr = LocalReference (ptr ty) v
           eltSize <- sizeof 64 ty
           intCount <- if isJust count
                       then if not ((typeOf $ fromJust count) == i64)
@@ -553,21 +562,25 @@ instrument blacklist' opts m = do
       | (Load _ addr _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)
         when enable $ do
-          meta <- inspectPointer addr
-          case meta of
-            (Just (ty, (basePtr, boundPtr, keyPtr, lockPtr))) -> do
-              base <- load basePtr 0
-              bound <- load boundPtr 0
-              addr' <- bitcast addr (ptr i8)
-              tySize <- sizeof 64 ty
-              -- Check the load is spatially in bounds
-              _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [base, bound, addr', tySize]
-              -- Check the load is temporally in bounds
-              lock <- load lockPtr 0
-              key <- load keyPtr 0
-              _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lock, key]
-              return ()
-            _ -> return ()
+          safe <- gets (Data.Set.member addr . safePointers)
+          if not safe
+          then do
+            meta <- inspectPointer addr
+            case meta of
+              (Just (ty, (basePtr, boundPtr, keyPtr, lockPtr))) -> do
+                base <- load basePtr 0
+                bound <- load boundPtr 0
+                addr' <- bitcast addr (ptr i8)
+                tySize <- sizeof 64 ty
+                -- Check the load is spatially in bounds
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [base, bound, addr', tySize]
+                -- Check the load is temporally in bounds
+                lock <- load lockPtr 0
+                key <- load keyPtr 0
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lock, key]
+                return ()
+              _ -> return ()
+          else return ()
 
           Helpers.emitNamedInst i
           -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the load address.
@@ -575,7 +588,6 @@ instrument blacklist' opts m = do
             let loadedPtr = LocalReference (pointerReferent $ typeOf addr) v
             loadedPtrMetadata <- emitRuntimeMetadataLoad addr
             modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ basicBlockMetadataTable s }
-
           return ()
 
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
@@ -598,6 +610,7 @@ instrument blacklist' opts m = do
                 Helpers.emitNamedInst $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
               else Helpers.emitNamedInst i
               -- The function could deallocate any of the passed pointers so behave as if it has deallocated all of them
+              -- TODO: we also need to update 'safePointers' here
               modify $ \s -> s { basicBlockMetadataTable = foldr ($) (basicBlockMetadataTable s) $ map Data.Map.delete ptrArgs }
               -- Read the pointer metadata for the return value if it is a pointer
               when (Helpers.isPointerType rt) $ do
@@ -618,7 +631,7 @@ instrument blacklist' opts m = do
               modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert gepResultPtr meta' $ basicBlockMetadataTable s }
               -- The pointer created by getelementptr shares metadata storage with the parent pointer
               modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
-          Nothing -> modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
+          _ -> return ()
         Helpers.emitNamedInst i
 
       | (BitCast addr ty _) <- o = do
@@ -633,10 +646,10 @@ instrument blacklist' opts m = do
               modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert bitcastResultPtr meta' $ basicBlockMetadataTable s }
               -- The pointer created by bitcast shares metadata storage with the parent pointer
               modify $ \s -> s { metadataStorage = Data.Map.insert bitcastResultPtr meta' $ metadataStorage s }
-            Nothing -> modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
+            _ -> return ()
           Helpers.emitNamedInst i
 
-      | (Select cond tval@(LocalReference (PointerType ty _) tn) fval@(LocalReference _ fn) _) <- o = do
+      | (Select cond tval@(LocalReference (PointerType ty _) _) fval@(LocalReference _ _) _) <- o = do
         -- TODO: Switch to using 'inspectPointer' here.
         Helpers.emitNamedInst i
         haveBlockMetadataT <- gets ((Data.Map.member tval) . basicBlockMetadataTable)
@@ -644,8 +657,8 @@ instrument blacklist' opts m = do
         haveBlockMetadataF <- gets ((Data.Map.member fval) . basicBlockMetadataTable)
         haveStackMetadataF <- gets ((Data.Map.member fval) . functionMetadataTable)
         let haveMetadata = (haveBlockMetadataT || haveStackMetadataT) && (haveBlockMetadataF || haveStackMetadataF)
-        unsafeT <- gets (not . Data.Set.member tn . safePointers)
-        unsafeF <- gets (not . Data.Set.member fn . safePointers)
+        unsafeT <- gets (not . Data.Set.member tval . safePointers)
+        unsafeF <- gets (not . Data.Set.member fval . safePointers)
 
         when ((not $ Helpers.isFunctionType ty) && haveMetadata) $ do
           tMeta <- if haveStackMetadataT
@@ -663,9 +676,9 @@ instrument blacklist' opts m = do
           if haveStackMetadataT && haveStackMetadataF
           then modify $ \s -> s { functionMetadataTable = Data.Map.insert newPtr newMeta $ functionMetadataTable s }
           else modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr newMeta $ basicBlockMetadataTable s }
-          -- We always have to allocate storage for the pointer returned by select, even if both input pointers are safe (because the condition is a runtime condition).
+          -- Selecting between two safe pointers yields a safe pointer, even if the condition is unknown.
           if not (unsafeT && unsafeF)
-          then modify $ \s -> s { safePointers = Data.Set.insert v $ safePointers s }
+          then modify $ \s -> s { safePointers = Data.Set.insert newPtr $ safePointers s }
           else return ()
           -- The pointer created by select aliases a pointer with allocated metadata storage
           modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
@@ -726,13 +739,13 @@ instrument blacklist' opts m = do
             (UnName {}) -> do -- Calling a computed function pointer
               Helpers.emitNamedInst i
 
-      | (Store _ tgt@(LocalReference (PointerType ty _) n) src _ _ _) <- o = do
+      | (Store _ tgt@(LocalReference (PointerType ty _) _) src _ _ _) <- o = do
         -- TODO: Switch to using 'inspectPointer' here.
         enable <- gets (CLI.instrumentStore . options)
         when (enable && (not $ Helpers.isFunctionType ty)) $ do
           haveTargetBlockMetadata <- gets ((Data.Map.member tgt) . basicBlockMetadataTable)
           haveTargetStackMetadata <- gets ((Data.Map.member tgt) . functionMetadataTable)
-          unsafe <- gets (not . Data.Set.member n . safePointers)
+          unsafe <- gets (not . Data.Set.member tgt . safePointers)
           when (unsafe && (haveTargetBlockMetadata || haveTargetStackMetadata)) $ do
             (tgtBasePtr, tgtBoundPtr, tgtKeyPtr, tgtLockPtr) <- if haveTargetStackMetadata
                                                                 then gets ((! tgt) . functionMetadataTable)
