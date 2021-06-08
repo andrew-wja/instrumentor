@@ -248,6 +248,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               _ -> return []
           else return []
       -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
+      -- Additionally, if a pointer is returned, local variables must be allocated to hold the metadata for that pointer.
       | (v := o) <- inst, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) opds _ _) <- o = do
           enable <- gets (CLI.instrumentCall . options)
           ignore <- isIgnoredFunction fname
@@ -260,9 +261,9 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
             let ptrRet = if (Helpers.isPointerType rt) then [LocalReference rt v] else []
             return (ptrArgs ++ ptrRet)
           else return []
-      -- Case 3: If a phi instruction produces a pointer, local metadata is allocated for it. Local metadata must also be available for any LocalReference incoming values.
-      | (v := o) <- inst, (Phi ty@(PointerType {}) incoming _) <- o = do
-          return $ [LocalReference ty v] ++ (map fst $ filter (Helpers.isLocalReference . fst) incoming)
+      -- Case 3: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
+      | (_ := o) <- inst, (Phi (PointerType {}) incoming _) <- o = do
+          return (map fst $ filter (Helpers.isLocalReference . fst) incoming)
       -- Case 4: If we allocate anything on the stack, we get a pointer to it, which needs metadata.
       | (v := o) <- inst, (Alloca ty _ _ _) <- o = do
           enable <- gets (CLI.instrumentStack . options)
@@ -709,6 +710,8 @@ instrument blacklist' opts m = do
           let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
           -- The pointer created by phi is only assumed valid within the basic block
           modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert newPtr newMeta $ basicBlockMetadataTable s }
+          -- The pointer created by phi aliases a pointer with allocated metadata storage
+          modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
 
       | otherwise = Helpers.emitNamedInst i
 
