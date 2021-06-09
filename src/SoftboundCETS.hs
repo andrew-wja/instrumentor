@@ -227,9 +227,6 @@ getLocalMetadataStorage p = do
 --   Only LocalReference pointers require local variables allocated to hold metadata. The metadata for global references
 --   is held in global variables, and the metadata for constant expressions of pointer type is computed as more constant
 --   expressions, and so doesn't require storage. Returns a list of pointer 'Operand's requiring local metadata storage.
---   Note the use of 'censor' here -- at the point where we are identifying local metadata allocation sites, no metadata
---   has been allocated. The warning messages from 'inspectPointer' about metadata not being allocated for a pointer are
---   spurious here, because we are in the process of figuring out what actually needs allocating.
 identifyLocalMetadataAllocations :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => BasicBlock -> m [Operand]
 identifyLocalMetadataAllocations (BasicBlock _ i t) = do
   isites <- liftM concat $ mapM instAllocations i
@@ -246,8 +243,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
                         (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)
                      then [LocalReference (pointerReferent $ typeOf addr) v]
                      else []
-            meta <- censor (const []) $ inspectPointer addr
-            let addr' = if isJust meta
+            let addr' = if Helpers.isLocalReference addr
                         then [addr]
                         else []
             return (v' ++ addr')
@@ -292,11 +288,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
       | (Do (Ret (Just x) _)) <- term,
         Helpers.isLocalReference x,
         Helpers.isPointerType $ typeOf x,
-        not $ Helpers.isFunctionType $ pointerReferent $ typeOf x = do
-          meta <- censor (const []) $ inspectPointer x
-          case meta of
-            (Just _) -> return [x]
-            _ -> return []
+        not $ Helpers.isFunctionType $ pointerReferent $ typeOf x = return [x]
       | otherwise = return []
 
 -- | Emit the declaration of a runtime API function.
