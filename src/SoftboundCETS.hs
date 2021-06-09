@@ -244,7 +244,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           then do
             meta <- censor (const []) $ inspectPointer addr
             case meta of
-              (Just (ty@(PointerType {}), _)) -> return [addr, LocalReference ty v]
+              (Just (ty@(PointerType {}), _)) -> return [LocalReference ty v]
               _ -> return []
           else return []
       -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
@@ -285,9 +285,9 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
     termAllocations term
       -- Case 6: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so (for LocalReference pointers) it must be available in local variables.
       | (Do (Ret (Just x) _)) <- term,
+        Helpers.isLocalReference x,
         Helpers.isPointerType $ typeOf x,
-        not $ Helpers.isFunctionType $ pointerReferent $ typeOf x,
-        Helpers.isLocalReference x = do
+        not $ Helpers.isFunctionType $ pointerReferent $ typeOf x = do
           meta <- censor (const []) $ inspectPointer x
           case meta of
             (Just _) -> return [x]
@@ -357,6 +357,16 @@ emitShadowStackDeallocation = do
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
 
+-- | Store the metadata for the given pointer into the local variables allocated to hold it.
+emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Metadata -> m Metadata
+emitMetadataStoreToLocalVariables p (base, bound, key, lock) = do
+  meta@(basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage p
+  store basePtr 8 base
+  store boundPtr 8 bound
+  store keyPtr 8 key
+  store lockPtr 8 lock
+  return meta
+
 -- | Load the metadata for a pointer function parameter from the shadow stack.
 emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Integer -> m ()
 emitMetadataLoadFromShadowStack p ix = do
@@ -365,11 +375,7 @@ emitMetadataLoadFromShadowStack p ix = do
   bound <- emitRuntimeAPIFunctionCall "__softboundcets_load_bound_shadow_stack" [ix']
   key <- emitRuntimeAPIFunctionCall "__softboundcets_load_key_shadow_stack" [ix']
   lock <- emitRuntimeAPIFunctionCall "__softboundcets_load_lock_shadow_stack" [ix']
-  meta@(basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage p
-  store basePtr 8 base
-  store boundPtr 8 bound
-  store keyPtr 8 key
-  store lockPtr 8 lock
+  meta <- emitMetadataStoreToLocalVariables p (base, bound, key, lock)
   modify $ \s -> s { functionMetadataTable = Data.Map.insert p meta $ functionMetadataTable s }
   return ()
 
@@ -549,15 +555,11 @@ instrument blacklist' opts m = do
           intBase <- ptrtoint base i64
           intBound <- add allocSize intBase
           bound <- inttoptr intBound (ptr i8)
-          meta@(basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage resultPtr
-          store basePtr 8 base
-          store boundPtr 8 bound
           functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
           functionLockPtr <- gets (fromJust . localStackFrameLockPtr)
           functionKey <- load functionKeyPtr 0
           functionLock <- load functionLockPtr 0
-          store keyPtr 8 functionKey
-          store lockPtr 8 functionLock
+          meta <- emitMetadataStoreToLocalVariables resultPtr (base, bound, functionKey, functionLock)
           modify $ \s -> s { functionMetadataTable = Data.Map.insert resultPtr meta $ functionMetadataTable s }
 
       | (Load _ addr _ _ _) <- o = do
