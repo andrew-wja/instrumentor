@@ -47,6 +47,7 @@ fflush
 fflush_unlocked
 fgetc
 fgets
+fgets_unlocked
 fileno
 flockfile
 floor
