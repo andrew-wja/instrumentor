@@ -242,9 +242,15 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           enable <- gets (CLI.instrumentLoad . options)
           if enable
           then do
-            if (Helpers.isPointerType $ pointerReferent $ typeOf addr) && (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)
-            then return [LocalReference (pointerReferent $ typeOf addr) v]
-            else return []
+            let v' = if (Helpers.isPointerType $ pointerReferent $ typeOf addr) &&
+                        (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)
+                     then [LocalReference (pointerReferent $ typeOf addr) v]
+                     else []
+            meta <- censor (const []) $ inspectPointer addr
+            let addr' = if isJust meta
+                        then [addr]
+                        else []
+            return (v' ++ addr')
           else return []
       -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
       -- Additionally, if a pointer is returned, local variables must be allocated to hold the metadata for that pointer.
