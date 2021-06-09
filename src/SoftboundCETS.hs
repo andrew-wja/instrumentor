@@ -242,10 +242,9 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           enable <- gets (CLI.instrumentLoad . options)
           if enable
           then do
-            meta <- censor (const []) $ inspectPointer addr
-            case meta of
-              (Just (ty@(PointerType {}), _)) -> return [LocalReference ty v]
-              _ -> return []
+            if (Helpers.isPointerType $ pointerReferent $ typeOf addr) && (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)
+            then return [LocalReference (pointerReferent $ typeOf addr) v]
+            else return []
           else return []
       -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
       -- Additionally, if a pointer is returned, local variables must be allocated to hold the metadata for that pointer.
@@ -587,7 +586,8 @@ instrument blacklist' opts m = do
 
           Helpers.emitNamedInst i
           -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the load address.
-          when (Helpers.isPointerType $ pointerReferent $ typeOf addr) $ do
+          when ((Helpers.isPointerType $ pointerReferent $ typeOf addr) &&
+                (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)) $ do
             let loadedPtr = LocalReference (pointerReferent $ typeOf addr) v
             loadedPtrMetadata <- emitRuntimeMetadataLoad addr
             modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ basicBlockMetadataTable s }
