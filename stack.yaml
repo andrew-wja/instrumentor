@@ -6,7 +6,6 @@ packages:
 - .
 - ./llvm-hs/llvm-hs
 - ./llvm-hs/llvm-hs-pure
-- ./llvm-hs-pretty
 
 ghc-options:
   "$locals": -Wall -Wno-name-shadowing -Wno-orphans -Wno-unused-imports

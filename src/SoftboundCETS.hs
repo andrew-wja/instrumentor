@@ -33,7 +33,6 @@ import LLVM.IRBuilder.Constant
 import LLVM.IRBuilder.Instruction
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Monad
-import LLVM.Pretty (ppll)
 import Instrumentor
 import qualified CLI
 import qualified LLVMHelpers as Helpers
@@ -167,13 +166,13 @@ inspectPointer p
       haveBlockMetadata <- gets ((Data.Map.member p) . basicBlockMetadataTable)
       haveStackMetadata <- gets ((Data.Map.member p) . functionMetadataTable)
       if (haveBlockMetadata && haveStackMetadata)
-      then error $ "inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": have conflicting basic-block scope and function-scope metadata for pointer: " ++ (unpack $ ppll p)
+      then error $ "inspectPointer: in function " ++ (show fname) ++ ": have conflicting basic-block scope and function-scope metadata for pointer: " ++ (show p)
       else if haveStackMetadata
       then gets (Just . (ty,) . (! p) . functionMetadataTable)
       else if haveBlockMetadata
       then gets (Just . (ty,) . (! p) . basicBlockMetadataTable)
       else do
-        tell ["inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": no metadata for pointer " ++ (unpack $ ppll p)]
+        tell ["inspectPointer: in function " ++ (show fname) ++ ": no metadata for pointer " ++ (show p)]
         return Nothing
   {-
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
@@ -195,9 +194,9 @@ inspectPointer p
       fname <- gets (name . fromJust . currentFunction)
       case (typeOf p) of
         (PointerType {}) -> do
-          tell ["inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": unsupported pointer " ++ (unpack $ ppll p)]
+          tell ["inspectPointer: in function " ++ (show fname) ++ ": unsupported pointer " ++ (show p)]
           return Nothing
-        _ -> error $ "inspectPointer: in function " ++ (unpack $ ppll fname) ++ ": argument is not a pointer " ++ (unpack $ ppll p)
+        _ -> error $ "inspectPointer: in function " ++ (show fname) ++ ": argument is not a pointer " ++ (show p)
 
 -- | Allocate local variables to hold the metadata for the given pointer.
 allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
@@ -213,7 +212,7 @@ allocateLocalMetadataStorage p = do
     return (basePtr, boundPtr, keyPtr, lockPtr)
   else do
     fname <- gets (name . fromJust . currentFunction)
-    error $ "allocateLocalMetadataStorage: in function " ++ (unpack $ ppll fname) ++ ": storage already allocated for metadata for pointer " ++ (unpack $ ppll p)
+    error $ "allocateLocalMetadataStorage: in function " ++ (show fname) ++ ": storage already allocated for metadata for pointer " ++ (show p)
 
 -- | Look up the local variables allocated to hold metadata for the given pointer
 getLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
@@ -221,7 +220,7 @@ getLocalMetadataStorage p = do
   allocated <- gets ((Data.Map.lookup p) . metadataStorage)
   if isJust allocated
   then gets ((! p) . metadataStorage)
-  else error $ "getLocalMetadataStorage: no storage allocated for metadata for pointer " ++ (unpack $ ppll p)
+  else error $ "getLocalMetadataStorage: no storage allocated for metadata for pointer " ++ (show p)
 
 -- | Identify the instructions in the given basic block which require local variables to be allocated to hold metadata.
 --   Only LocalReference pointers require local variables allocated to hold metadata. The metadata for global references
@@ -318,7 +317,7 @@ emitRuntimeMetadataLoad addr
       -- I believe we can just call __softboundcets_metadata_load here but we need to make sure that we are actually setting up the metadata
       -- storage for global variables properly (in 'instrumentGlobalVariable' below) first.
       gets (fromJust . dontCareMetadata)
-  | otherwise = error $ "emitRuntimeMetadataLoad: expected pointer but saw " ++ (unpack $ ppll addr)
+  | otherwise = error $ "emitRuntimeMetadataLoad: expected pointer but saw " ++ (show addr)
 
 -- | Create a local key and lock for entities allocated in the current stack frame
 emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => m ()
@@ -396,12 +395,12 @@ emitMetadataStoreToShadowStack callee p ix = do
         if isJust callee
         then
           if isAllocated
-          then tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)]
-          else tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)]
+          then tell ["emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": reload killed metadata for pointer " ++ (show p) ++ " passed to function " ++ (show $ fromJust callee)]
+          else tell ["emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (show p) ++ " passed to function " ++ (show $ fromJust callee)]
         else
           if isAllocated
-          then tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": reload killed metadata for pointer " ++ (unpack $ ppll p) ++ " being returned"]
-          else tell ["emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (unpack $ ppll p) ++ " being returned"]
+          then tell ["emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": reload killed metadata for pointer " ++ (show p) ++ " being returned"]
+          else tell ["emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": using don't-care metadata for non LocalReference pointer " ++ (show p) ++ " being returned"]
         (basePtr, boundPtr, keyPtr, lockPtr) <- emitRuntimeMetadataLoad p
         ix' <- pure $ int32 ix
         base <- load basePtr 0
@@ -415,8 +414,8 @@ emitMetadataStoreToShadowStack callee p ix = do
         return ()
       else do
         if isJust callee
-        then error $ "emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll p) ++ " passed to function " ++ (unpack $ ppll $ fromJust callee)
-        else error $ "emitMetadataStoreToShadowStack: in function " ++ (unpack $ ppll fname) ++ ": no metadata storage allocated for pointer " ++ (unpack $ ppll p) ++ " being returned"
+        then error $ "emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": no metadata storage allocated for pointer " ++ (show p) ++ " passed to function " ++ (show $ fromJust callee)
+        else error $ "emitMetadataStoreToShadowStack: in function " ++ (show fname) ++ ": no metadata storage allocated for pointer " ++ (show p) ++ " being returned"
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -463,7 +462,7 @@ instrument blacklist' opts m = do
           modify $ \s -> s { safePointers = Data.Set.insert (ConstantOperand $ Const.GlobalReference gType gName) $ safePointers s }
           -- TODO: we should calculate the metadata for this global here, emit global variable definitions, and update 'globalMetadataTable'.
           -- However, right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip this for testing.
-      | otherwise = error $ "instrumentGlobalVariable: expected global variable, but got: " ++ (unpack $ ppll g)
+      | otherwise = error $ "instrumentGlobalVariable: expected global variable, but got: " ++ (show g)
 
     instrumentFunction f
       | (Function {}) <- f = do
@@ -690,7 +689,7 @@ instrument blacklist' opts m = do
                       else do
                         allocated <- gets ((Data.Map.member op) .  metadataStorage)
                         if allocated then gets ((! op) . metadataStorage)
-                        else error $ "no metadata storage allocated for incoming pointer " ++ (unpack $ ppll op) ++ " in " ++ (unpack $ ppll o)
+                        else error $ "no metadata storage allocated for incoming pointer " ++ (show op) ++ " in " ++ (show o)
               return (f meta, n)
 
         when (not $ Helpers.isFunctionType ty) $ do

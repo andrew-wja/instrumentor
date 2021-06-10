@@ -9,14 +9,13 @@ import LLVM.AST.Global
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Internal.SnocList
-import LLVM.Pretty (ppll)
 
 -- | Helper to rewrite the called function symbol (for example, to a wrapper function symbol) at a callsite.
 rewriteCalledFunctionName :: Name -> Instruction -> Instruction
 rewriteCalledFunctionName n f
   | (Call tckind cconv retAttrs (Right (ConstantOperand (GlobalReference fty _))) params attrs meta) <- f =
       Call tckind cconv retAttrs (Right (ConstantOperand (GlobalReference fty n))) params attrs meta
-  | otherwise = error $ "rewriteCalledFunctionName: expected call to function symbol but saw " ++ (unpack $ ppll f)
+  | otherwise = error $ "rewriteCalledFunctionName: expected call to function symbol but saw " ++ (show f)
 
 -- | Code generation helper function
 emitNamedTerm :: MonadIRBuilder m => Named Terminator -> m ()
@@ -68,7 +67,7 @@ typeIndex ty [] = pure $ Just ty
 typeIndex (PointerType ty _) (_:is') = typeIndex ty is'
 typeIndex (StructureType _ elTys) (ConstantOperand (Int 32 val):is') =
   typeIndex (head $ drop (fromIntegral val) elTys) is'
-typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (unpack $ ppll i)
+typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (show i)
 typeIndex (VectorType _ elTy) (_:is') = typeIndex elTy is'
 typeIndex (ArrayType _ elTy) (_:is') = typeIndex elTy is'
 typeIndex (NamedTypeReference nm) is' = do
@@ -76,4 +75,4 @@ typeIndex (NamedTypeReference nm) is' = do
   case mayTy of
     Nothing -> pure Nothing
     Just ty -> typeIndex ty is'
-typeIndex t (_:_) = error $ "Can't index into type: " ++ (unpack $ ppll t)
+typeIndex t (_:_) = error $ "Can't index into type: " ++ (show t)
