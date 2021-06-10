@@ -1,6 +1,5 @@
 module LLVMHelpers where
 
-import Data.Text.Lazy (unpack)
 import Data.Map (lookup)
 import Control.Monad.State
 import LLVM.AST

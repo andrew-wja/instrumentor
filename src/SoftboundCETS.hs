@@ -23,7 +23,6 @@ import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
 import Data.List (isInfixOf, nub, sort)
-import Data.Text.Lazy (unpack)
 import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
 import LLVM.AST.Type
@@ -192,7 +191,8 @@ inspectPointer p
   -}
   | otherwise = do
       fname <- gets (name . fromJust . currentFunction)
-      case (typeOf p) of
+      tp <- typeOf p
+      case tp of
         (PointerType {}) -> do
           tell ["inspectPointer: in function " ++ (show fname) ++ ": unsupported pointer " ++ (show p)]
           return Nothing
@@ -238,9 +238,10 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           enable <- gets (CLI.instrumentLoad . options)
           if enable
           then do
-            if (Helpers.isPointerType $ pointerReferent $ typeOf addr) &&
-               (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)
-            then return [LocalReference (pointerReferent $ typeOf addr) v]
+            ta <- typeOf addr
+            if (Helpers.isPointerType $ pointerReferent ta) &&
+               (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta)
+            then return [LocalReference (pointerReferent ta) v]
             else return []
           else return []
       -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
@@ -250,11 +251,13 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           ignore <- isIgnoredFunction fname
           if (enable && not ignore)
           then do
-            let ptrArgs = filter (not . Helpers.isFunctionType . pointerReferent . typeOf) $
-                          filter (Helpers.isPointerType . typeOf) $
-                          filter Helpers.isLocalReference $
-                          map fst opds
+            let lrArgs = filter Helpers.isLocalReference $ map fst opds
             let ptrRet = if (Helpers.isPointerType rt) then [LocalReference rt v] else []
+            argTys <- mapM typeOf lrArgs
+            let ptrArgs = map snd $
+                          filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                          filter (Helpers.isPointerType . fst) $
+                          zip argTys lrArgs
             return (ptrArgs ++ ptrRet)
           else return []
       -- Case 3: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
@@ -270,20 +273,25 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           ignore <- isIgnoredFunction fname
           if (enable && not ignore)
           then do
-            let ptrArgs = filter (not . Helpers.isFunctionType . pointerReferent . typeOf) $
-                          filter (Helpers.isPointerType . typeOf) $
-                          filter Helpers.isLocalReference $
-                          map fst opds
+            let lrArgs = filter Helpers.isLocalReference $ map fst opds
+            argTys <- mapM typeOf lrArgs
+            let ptrArgs = map snd $
+                          filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                          filter (Helpers.isPointerType . fst) $
+                          zip argTys lrArgs
             return ptrArgs
           else return []
       | otherwise = return []
 
     termAllocations term
       -- Case 6: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so (for LocalReference pointers) it must be available in local variables.
-      | (Do (Ret (Just x) _)) <- term,
-        Helpers.isLocalReference x,
-        Helpers.isPointerType $ typeOf x,
-        not $ Helpers.isFunctionType $ pointerReferent $ typeOf x = return [x]
+      | (Do (Ret (Just x) _)) <- term = do
+          tx <- typeOf x
+          if (Helpers.isLocalReference x) &&
+             (Helpers.isPointerType tx) &&
+             (not $ Helpers.isFunctionType $ pointerReferent tx)
+          then return [x]
+          else return []
       | otherwise = return []
 
 -- | Emit the declaration of a runtime API function.
@@ -295,13 +303,13 @@ emitRuntimeAPIFunctionDecl decl
   | otherwise = undefined
 
 -- | Emit a call to a runtime API function.
-emitRuntimeAPIFunctionCall :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m) => String -> [Operand] -> m Operand
+emitRuntimeAPIFunctionCall :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m, MonadModuleBuilder m) => String -> [Operand] -> m Operand
 emitRuntimeAPIFunctionCall n args = do
   (fname, fproto) <- gets ((!! (mkName n)) . runtimeFunctionPrototypes)
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
 
 -- | Load the metadata for the given address.
-emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> m Metadata
+emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
 emitRuntimeMetadataLoad addr
   | (LocalReference (PointerType _ _) _) <- addr = do
       addr' <- bitcast addr (ptr i8)
@@ -320,7 +328,7 @@ emitRuntimeMetadataLoad addr
   | otherwise = error $ "emitRuntimeMetadataLoad: expected pointer but saw " ++ (show addr)
 
 -- | Create a local key and lock for entities allocated in the current stack frame
-emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => m ()
+emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitLocalKeyAndLockCreation = do
   keyPtr <- alloca i64 Nothing 8
   lockPtr <- alloca (ptr i8) Nothing 8
@@ -329,7 +337,7 @@ emitLocalKeyAndLockCreation = do
   return ()
 
 -- | Invalidate the local key; We do this just prior to returning from a function.
-emitLocalKeyAndLockDestruction :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => m ()
+emitLocalKeyAndLockDestruction :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitLocalKeyAndLockDestruction = do
   keyPtr <- gets (fromJust . localStackFrameKeyPtr)
   key <- load keyPtr 0
@@ -337,14 +345,14 @@ emitLocalKeyAndLockDestruction = do
   return ()
 
 -- | Allocate space on the shadow stack for the parameters of an instrumented function we are about to call.
-emitShadowStackAllocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Integer -> m ()
+emitShadowStackAllocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Integer -> m ()
 emitShadowStackAllocation numArgs = do
   numArgs' <- pure $ int32 numArgs
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_allocate_shadow_stack_space" [numArgs']
   return ()
 
 -- | Deallocate the shadow stack space for the instrumented function which just returned.
-emitShadowStackDeallocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => m ()
+emitShadowStackDeallocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitShadowStackDeallocation = do
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
@@ -360,7 +368,7 @@ emitMetadataStoreToLocalVariables p (base, bound, key, lock) = do
   return meta
 
 -- | Load the metadata for a pointer function parameter from the shadow stack.
-emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m) => Operand -> Integer -> m ()
+emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Integer -> m ()
 emitMetadataLoadFromShadowStack p ix = do
   ix' <- pure $ int32 ix
   base <- emitRuntimeAPIFunctionCall "__softboundcets_load_base_shadow_stack" [ix']
@@ -457,7 +465,8 @@ instrument blacklist' opts m = do
       | (GlobalVariable {}) <- g, isNothing $ initializer g                         = return () -- Uninitialized globals do not get metadata
       | (GlobalVariable {}) <- g = do
           let gName = name g
-          let gType = ptr $ typeOf $ fromJust $ initializer g
+          gType' <- typeOf (fromJust $ initializer g)
+          let gType = ptr gType'
           -- The address of a global variable is always safe
           modify $ \s -> s { safePointers = Data.Set.insert (ConstantOperand $ Const.GlobalReference gType gName) $ safePointers s }
           -- TODO: we should calculate the metadata for this global here, emit global variable definitions, and update 'globalMetadataTable'.
@@ -479,10 +488,12 @@ instrument blacklist' opts m = do
                              , metadataStorage = Data.Map.empty
                              }
             let firstBlockLabel = (\(BasicBlock n _ _) -> n) $ head $ basicBlocks f
-            let pointerArguments = map (\(Parameter t n _) -> (LocalReference t n)) $
-                                   filter (not . Helpers.isFunctionType . pointerReferent . typeOf) $
-                                   filter (Helpers.isPointerType . typeOf) $
-                                   fst $ parameters f
+            let params = fst $ parameters f
+            paramTys <- mapM typeOf params
+            let pointerArguments = map (\(_, Parameter t n _) -> (LocalReference t n)) $
+                                   filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                                   filter (Helpers.isPointerType . fst) $
+                                   zip paramTys params
             let shadowStackIndices :: [Integer] = [1..]
             emitBlockStart (mkName "sbcets_metadata_init")
             mapM_ allocateLocalMetadataStorage pointerArguments
@@ -538,9 +549,11 @@ instrument blacklist' opts m = do
         when enable $ do
           eltSize <- sizeof 64 ty
           intCount <- if isJust count
-                      then if not ((typeOf $ fromJust count) == i64)
-                           then sext (fromJust count) i64
-                           else pure $ fromJust count
+                      then do
+                        tc <- typeOf $ fromJust count
+                        if not (tc == i64)
+                        then sext (fromJust count) i64
+                        else pure $ fromJust count
                       else pure $ ConstantOperand $ Const.Int 64 1
           allocSize <- mul eltSize intCount
           base <- bitcast resultPtr (ptr i8)
@@ -579,9 +592,10 @@ instrument blacklist' opts m = do
 
           Helpers.emitNamedInst i
           -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the load address.
-          when ((Helpers.isPointerType $ pointerReferent $ typeOf addr) &&
-                (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent $ typeOf addr)) $ do
-            let loadedPtr = LocalReference (pointerReferent $ typeOf addr) v
+          ta <- typeOf addr
+          when ((Helpers.isPointerType $ pointerReferent ta) &&
+                (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta)) $ do
+            let loadedPtr = LocalReference (pointerReferent ta) v
             loadedPtrMetadata <- emitRuntimeMetadataLoad addr
             modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert loadedPtr loadedPtrMetadata $ basicBlockMetadataTable s }
           return ()
@@ -595,8 +609,12 @@ instrument blacklist' opts m = do
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
-              let ptrArgs = filter (not . Helpers.isFunctionType . pointerReferent . typeOf) $
-                            filter (Helpers.isPointerType . typeOf) $ map fst opds
+              let opds' = map fst opds
+              opdTys <- mapM typeOf opds'
+              let ptrArgs = map snd $
+                            filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                            filter (Helpers.isPointerType . fst) $
+                            zip opdTys opds'
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
               zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
               hasWrapper <- isWrappedFunction fname
@@ -619,7 +637,8 @@ instrument blacklist' opts m = do
         meta <- inspectPointer addr
         case meta of
           (Just (_, meta')) -> do
-            ty' <- Helpers.typeIndex (typeOf addr) ixs
+            ta <- typeOf addr
+            ty' <- Helpers.typeIndex ta ixs
             -- If we cannot compute the ultimate type of the pointer after indexing, don't instrument it.
             -- This can happen in the case of opaque structure types. https://llvm.org/docs/LangRef.html#opaque-structure-types
             when (isJust ty') $ do
@@ -721,8 +740,12 @@ instrument blacklist' opts m = do
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
-              let ptrArgs = filter (not . Helpers.isFunctionType . pointerReferent . typeOf) $
-                            filter (Helpers.isPointerType . typeOf) $ map fst opds
+              let opds' = map fst opds
+              opdTys <- mapM typeOf opds'
+              let ptrArgs = map snd $
+                            filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                            filter (Helpers.isPointerType . fst) $
+                            zip opdTys opds'
               emitShadowStackAllocation (fromIntegral $ 1 + length ptrArgs)
               zipWithM_ (emitMetadataStoreToShadowStack $ Just fname) ptrArgs [1..]
               hasWrapper <- isWrappedFunction fname

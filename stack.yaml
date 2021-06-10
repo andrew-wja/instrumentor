@@ -6,6 +6,7 @@ packages:
 - ./llvm-hs/llvm-hs-pure
 
 ghc-options:
+  llvm-hs: -Wno-name-shadowing -Wno-orphans -Wno-unused-imports -optcxx=-std=c++11 -optcxx=-lstdc++ -optcxx=-fno-rtti -optcxx=-Wno-init-list-lifetime -optcxx=-Wno-stringop-overflow
   "$locals": -Wall -Wno-name-shadowing -Wno-orphans -Wno-unused-imports
   "$targets": -Wall -Wno-partial-type-signatures
   "$everything": -O2
