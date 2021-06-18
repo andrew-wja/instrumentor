@@ -4,10 +4,12 @@ packages:
 - .
 - ./llvm-hs/llvm-hs
 - ./llvm-hs/llvm-hs-pure
+- ./llvm-hs-pretty
 
 ghc-options:
-  llvm-hs: -Wno-name-shadowing -Wno-orphans -Wno-unused-imports -optcxx=-std=c++11 -optcxx=-lstdc++ -optcxx=-fno-rtti -optcxx=-Wno-init-list-lifetime -optcxx=-Wno-stringop-overflow
-  "$locals": -Wall -Wno-name-shadowing -Wno-orphans -Wno-unused-imports
+  llvm-hs: -w -optcxx=-std=c++11 -optcxx=-lstdc++ -optcxx=-fno-rtti -optcxx=-Wno-init-list-lifetime -optcxx=-Wno-stringop-overflow
+  llvm-hs-pretty: -w
+  "$locals": -w
   "$targets": -Wall -Wno-partial-type-signatures
   "$everything": -O2
 
