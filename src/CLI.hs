@@ -17,7 +17,6 @@ data Options = Options { instrumentLoad :: Bool -- ^ Whether to instrument load 
                        , instrumentCall :: Bool -- ^ Whether to instrument function calls
                        , emitChecks :: Bool -- ^ Whether to emit runtime metadata validity checks
                        , instrumentStack :: Bool -- ^ Whether to instrument stack allocations
-                       --, instrumentGlobals :: Bool
                        , file :: String -- ^ The path to the input module for instrumentation
                        , blacklist :: String -- ^ Function symbols in the blacklist will not be instrumented
                        }
@@ -53,9 +52,6 @@ optParser = Options
   <*> switch
       ( long "stack"
       <> help "Instrument stack allocations" )
-  -- ~ <*> switch
-      -- ~ ( long "globals"
-      -- ~ <> help "Instrument globals (allocations handled by the linker)" )
   <*> argument str
       ( metavar "FILE"
       <> help "LLVM module to instrument" )

@@ -1,3 +1,12 @@
+{-|
+Module      : LLVMHelpers
+Description : Helper functions for doing things with the LLVM API
+Copyright   : (c) Andrew Anderson, 2021
+License     : BSD-3
+Maintainer  : aanderso@tcd.ie
+Stability   : experimental
+-}
+
 module LLVMHelpers where
 
 import Data.Map (lookup)
