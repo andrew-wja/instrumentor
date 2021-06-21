@@ -69,14 +69,6 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The runtime provides wrappers for these standard library functions.
                                , runtimeFunctionPrototypes :: Map Name Type
                                -- ^ Prototypes of the runtime instrumentation API functions.
-                               , basicBlockMetadataTable :: Map Operand Metadata
-                               -- ^ The symbol table mapping pointers to their local metadata.
-                               --  'basicBlockMetadataTable' must be saved and restored around basic block entry and exit,
-                               --   otherwise we will leak metadata identifiers and potentially violate SSA form.
-                               , functionMetadataTable :: Map Operand Metadata
-                               -- ^ The symbol table mapping pointers to stack allocated entities to their metadata.
-                               --  'functionMetadataTable' only needs saving and restoring around function entry and exit.
-                               --  This is because it's always possible to instrument stack accesses in a way that preserves SSA form without doing any extra analysis.
                                , options :: CLI.Options
                                -- ^ The command line options are stored for inspection.
                                , currentFunction :: Maybe Global
@@ -97,7 +89,6 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
 emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty
-                               Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing
                                Data.Set.empty Data.Set.empty
@@ -469,8 +460,6 @@ instrument blacklist' opts m = do
                              , localStackFrameKeyPtr = Nothing
                              , localStackFrameLockPtr = Nothing
                              , currentFunction = Just f
-                             , basicBlockMetadataTable = Data.Map.empty
-                             , functionMetadataTable = Data.Map.empty
                              , dontCareMetadata = Nothing
                              , metadataStorage = Data.Map.empty
                              }
@@ -485,9 +474,7 @@ instrument blacklist' opts m = do
             let shadowStackIndices :: [Integer] = [1..]
             emitBlockStart (mkName "sbcets_metadata_init")
             mapM_ allocateLocalMetadataStorage pointerArguments
-            argMeta <- zipWithM emitMetadataLoadFromShadowStack pointerArguments shadowStackIndices
-            forM_ (zip pointerArguments argMeta) $ \(arg, meta) -> do
-              modify $ \s -> s { functionMetadataTable = Data.Map.insert arg meta $ functionMetadataTable s }
+            _ <- zipWithM emitMetadataLoadFromShadowStack pointerArguments shadowStackIndices
             -- Create the don't-care metadata.
             nullPtr <- inttoptr (int64 0) (ptr i8)
             dcMetadata <- allocateLocalMetadataStorage nullPtr
@@ -522,11 +509,9 @@ instrument blacklist' opts m = do
       instrumentTerm t
 
     instrumentBlock (BasicBlock n i t) = do
-      saved <- gets basicBlockMetadataTable
       emitBlockStart n
       mapM_ instrumentInst i
       instrumentTerm t
-      modify $ \s -> s { basicBlockMetadataTable = saved }
 
     instrumentInst i@(v := o)
       | (Alloca ty count _ _) <- o = do
@@ -614,13 +599,12 @@ instrument blacklist' opts m = do
                 wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
                 Helpers.emitNamedInst $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
               else Helpers.emitNamedInst i
-              -- Read the pointer metadata for the return value if it is a pointer
-              when (Helpers.isPointerType rt) $ do
-                let returnedPtr = LocalReference rt v
-                meta <- emitMetadataLoadFromShadowStack returnedPtr 0
-                modify $ \s -> s { basicBlockMetadataTable = Data.Map.insert returnedPtr meta $ basicBlockMetadataTable s }
+              -- Read the metadata for the return value off the shadow stack if it is a pointer
+              when (Helpers.isPointerType rt && (not $ Helpers.isFunctionType $ pointerReferent rt)) $ do
+                _ <- emitMetadataLoadFromShadowStack (LocalReference rt v) 0
+                return ()
               emitShadowStackDeallocation
-            (UnName {}) -> do -- Calling a computed function pointer
+            (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
 
       | (GetElementPtr _ addr ixs _) <- o = do
@@ -633,9 +617,7 @@ instrument blacklist' opts m = do
             return (ty, dc)
         ta <- typeOf addr
         ty' <- Helpers.typeIndex ta ixs
-        -- If we cannot compute the ultimate type of the pointer after indexing, don't instrument it.
-        -- This can happen in the case of opaque structure types. https://llvm.org/docs/LangRef.html#opaque-structure-types
-        -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types but we could do so.
+        -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
         when (isJust ty') $ do
           let gepResultPtr = LocalReference (ptr $ fromJust ty') v
           -- The pointer created by getelementptr shares metadata storage with the parent pointer
