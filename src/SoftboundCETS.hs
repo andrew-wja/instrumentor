@@ -160,6 +160,8 @@ inspectPointer p
       if (not allocated)
       then error $ "inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer: " ++ pp
       else gets (Just . (ty,) . (! p) . metadataStorage)
+  -- TODO-IMPROVE: Constant expressions of pointer type and global pointers currently just get the don't-care metadata.
+  -- This is sufficient for performance testing (since it doesn't alter the amount of work done) but not for real-world use.
   {-
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = return Nothing
@@ -386,7 +388,7 @@ emitMetadataStoreToShadowStack callee p ix = do
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
       _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
       return ()
-    Nothing -> do -- TODO-IMPROVE: We just pass the don't care metadata currently
+    Nothing -> do
       fname <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
       pp <- liftM (unpack . PP.render) $ PP.ppOperand p
       tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (unpack $ PP.ppll $ fromJust callee)]
