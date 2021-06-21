@@ -254,12 +254,14 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
             return (ptrArgs ++ ptrRet)
           else return []
       -- Case 3: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
-      | (_ := o) <- inst, (Phi (PointerType {}) incoming _) <- o = do
-          return (map fst $ filter (Helpers.isLocalReference . fst) incoming)
+      | (_ := o) <- inst, (Phi (PointerType ty _) incoming _) <- o = do
+          if (not $ Helpers.isFunctionType ty)
+          then return (map fst $ filter (Helpers.isLocalReference . fst) incoming)
+          else return []
       -- Case 4: If we allocate anything on the stack, we get a pointer to it, which needs metadata.
       | (v := o) <- inst, (Alloca ty _ _ _) <- o = do
           enable <- gets (CLI.instrumentStack . options)
-          if enable then return [LocalReference (ptr ty) v] else return []
+          if (enable && (not $ Helpers.isFunctionType ty)) then return [LocalReference (ptr ty) v] else return []
       -- Case 5: Case 2 for void functions (no possibility of returning a pointer here).
       | (Do o) <- inst, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname@(Name {})))) opds _ _) <- o = do
           enable <- gets (CLI.instrumentCall . options)
@@ -424,7 +426,7 @@ instrument blacklist' opts m = do
     instrumentDefinition g
       -- Don't instrument empty functions
       | (GlobalDefinition f@(Function {})) <- g, null $ basicBlocks f = emitDefn g
-      -- We do not currently instrument varargs functions
+      -- TODO-IMPROVE: Softboundcets does not instrument varargs functions
       | (GlobalDefinition f@(Function {})) <- g, snd $ parameters f = emitDefn g
       | (GlobalDefinition f@(Function {})) <- g = do
           hasWrapper <- isWrappedFunction $ name f
@@ -448,7 +450,7 @@ instrument blacklist' opts m = do
           let gType = ptr gType'
           -- The address of a global variable is always safe
           modify $ \s -> s { safePointers = Data.Set.insert (ConstantOperand $ Const.GlobalReference gType gName) $ safePointers s }
-          -- TODO-IMPROVE: right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip this for performance testing.
+          -- TODO-IMPROVE: right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip creating metadata here for performance testing.
       | otherwise = do
         pg <- liftM (unpack . PP.render) $ PP.ppGlobal g
         error $ "instrumentGlobalVariable: expected global variable, but got: " ++ pg
@@ -519,7 +521,7 @@ instrument blacklist' opts m = do
       | (Alloca ty count _ _) <- o = do
         -- We emit the alloca first because we reference the result in the instrumentation
         Helpers.emitNamedInst i
-        when (not $ Helpers.isFunctionType ty) $ do -- just in case
+        when (not $ Helpers.isFunctionType ty) $ do -- Don't instrument function pointers
           let resultPtr = LocalReference (ptr ty) v
             -- The address of a stack allocation is always safe
           modify $ \s -> s { safePointers = Data.Set.insert resultPtr $ safePointers s }
@@ -728,7 +730,7 @@ instrument blacklist' opts m = do
                 Helpers.emitNamedInst $ Do $ Helpers.rewriteCalledFunctionName wrapperFunctionName o
               else Helpers.emitNamedInst i
               emitShadowStackDeallocation
-            (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer is unhandled
+            (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
 
       | (Store _ tgt src _ _ _) <- o = do
