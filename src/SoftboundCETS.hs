@@ -159,7 +159,7 @@ inspectPointer p
       allocated <- gets (Data.Map.member p . metadataStorage)
       if (not allocated)
       then do
-        tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer: " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
+        tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
         return Nothing
       else gets (Just . (ty,) . (! p) . metadataStorage)
   -- TODO-IMPROVE: Constant expressions of pointer type and global pointers currently just get the don't-care metadata.
@@ -188,7 +188,7 @@ inspectPointer p
         (PointerType {}) -> do
           tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": unsupported pointer " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
           return Nothing
-        _ -> error $ "inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": argument is not a pointer " ++ pp
+        _ -> error $ "inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": argument " ++ pp ++ " is not a pointer"
 
 -- | Allocate local variables to hold the metadata for the given pointer.
 allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
@@ -633,13 +633,13 @@ instrument blacklist' opts m = do
             return (ty, dc)
         ta <- typeOf addr
         ty' <- Helpers.typeIndex ta ixs
-        -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
         if (isJust ty')
         then do
           let gepResultPtr = LocalReference (ptr $ fromJust ty') v
           -- The pointer created by getelementptr shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
         else do
+          -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
           pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
           pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
           tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " " ++ pAddr ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
