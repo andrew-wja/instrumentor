@@ -306,17 +306,24 @@ emitRuntimeAPIFunctionCall n args = do
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
 
 -- | Load the metadata for the given address.
-emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
+emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
 emitRuntimeMetadataLoad addr
   | (LocalReference (PointerType _ _) _) <- addr = do
-      addr' <- bitcast addr (ptr i8)
-      (basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage addr
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_load" [addr', basePtr, boundPtr, keyPtr, lockPtr]
-      emitCheck <- gets (CLI.emitChecks . options)
-      when emitCheck $ do
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
-        return ()
-      return (basePtr, boundPtr, keyPtr, lockPtr)
+      allocated <- gets (Data.Map.member addr . metadataStorage)
+      if not allocated
+      then do
+        pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+        tell ["emitRuntimeMetadataLoad: using don't-care metadata for uninstrumented pointer " ++ pAddr]
+        gets (fromJust . dontCareMetadata)
+      else do
+        addr' <- bitcast addr (ptr i8)
+        (basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage addr
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_load" [addr', basePtr, boundPtr, keyPtr, lockPtr]
+        emitCheck <- gets (CLI.emitChecks . options)
+        when emitCheck $ do
+          _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
+          return ()
+        return (basePtr, boundPtr, keyPtr, lockPtr)
   | (ConstantOperand {}) <- addr = do
       -- TODO-IMPROVE: If asked to load the metadata for a constant pointer expression or global variable, we currently just return the don't-care metadata.
       -- I believe we can just call __softboundcets_metadata_load here but we need to make sure that we are actually setting up the metadata
