@@ -22,7 +22,7 @@ import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
-import Data.List (isInfixOf, nub, sort)
+import Data.List (isInfixOf, nub, sort, intercalate)
 import Data.Text.Lazy (unpack)
 import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
@@ -158,7 +158,9 @@ inspectPointer p
       fname <- gets (name . fromJust . currentFunction)
       allocated <- gets (Data.Map.member p . metadataStorage)
       if (not allocated)
-      then error $ "inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer: " ++ pp
+      then do
+        tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer: " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
+        return Nothing
       else gets (Just . (ty,) . (! p) . metadataStorage)
   -- TODO-IMPROVE: Constant expressions of pointer type and global pointers currently just get the don't-care metadata.
   -- This is sufficient for performance testing (since it doesn't alter the amount of work done) but not for real-world use.
@@ -622,10 +624,15 @@ instrument blacklist' opts m = do
         ta <- typeOf addr
         ty' <- Helpers.typeIndex ta ixs
         -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
-        when (isJust ty') $ do
+        if (isJust ty')
+        then do
           let gepResultPtr = LocalReference (ptr $ fromJust ty') v
           -- The pointer created by getelementptr shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
+        else do
+          pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
+          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ "[" ++ (intercalate ", " pIxs) ++ "]"]
+          return ()
         Helpers.emitNamedInst i
 
       | (BitCast addr pty@(PointerType {}) _) <- o = do
