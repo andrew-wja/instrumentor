@@ -328,6 +328,8 @@ emitRuntimeMetadataLoad addr
       -- TODO-IMPROVE: If asked to load the metadata for a constant pointer expression or global variable, we currently just return the don't-care metadata.
       -- I believe we can just call __softboundcets_metadata_load here but we need to make sure that we are actually setting up the metadata
       -- storage for global variables properly (in 'instrumentGlobalVariable' below) first.
+      pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+      tell ["emitRuntimeMetadataLoad: using don't-care metadata for uninstrumented pointer " ++ pAddr]
       gets (fromJust . dontCareMetadata)
   | otherwise = do
       pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
@@ -568,6 +570,10 @@ instrument blacklist' opts m = do
             (ty, (basePtr, boundPtr, keyPtr, lockPtr)) <- case meta of
               (Just (ty, meta')) -> return (ty, meta')
               Nothing -> do
+                pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+                pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+                pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                 ty <- liftM pointerReferent $ typeOf addr
                 dc <- gets (fromJust. dontCareMetadata)
                 return (ty, dc)
@@ -628,6 +634,10 @@ instrument blacklist' opts m = do
         (_, meta') <- case meta of
           (Just (ty, meta')) -> return (ty, meta')
           Nothing -> do
+            pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+            pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+            pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+            tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
             ty <- liftM pointerReferent $ typeOf addr
             dc <- gets (fromJust. dontCareMetadata)
             return (ty, dc)
@@ -653,6 +663,10 @@ instrument blacklist' opts m = do
           (_, meta') <- case meta of
             (Just x) -> return x
             Nothing -> do
+              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               ty' <- liftM pointerReferent $ typeOf addr
               dc <- gets (fromJust. dontCareMetadata)
               return (ty', dc)
@@ -672,16 +686,30 @@ instrument blacklist' opts m = do
           ((ty, tMeta'), (_, fMeta')) <- case (tMeta, fMeta) of
             (Just (tyA, tMeta'), Just (tyB, fMeta')) -> return ((tyA, tMeta'), (tyB, fMeta'))
             (Just (tyA, tMeta'), Nothing) -> do
+              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand fval
+              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               tyB <- liftM pointerReferent $ typeOf fval
               fMeta' <- gets (fromJust . dontCareMetadata)
               return ((tyA, tMeta'), (tyB, fMeta'))
             (Nothing, Just (tyB, fMeta')) -> do
+              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tval
+              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               tyA <- liftM pointerReferent $ typeOf tval
               tMeta' <- gets (fromJust . dontCareMetadata)
               return ((tyA, tMeta'), (tyB, fMeta'))
             (Nothing, Nothing) -> do
+              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tval
+              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               tyA <- liftM pointerReferent $ typeOf tval
               tMeta' <- gets (fromJust . dontCareMetadata)
+              pAddr' <- liftM (unpack . PP.render) $ PP.ppOperand fval
+              tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr' ++ " in " ++ pInst]
               tyB <- liftM pointerReferent $ typeOf fval
               fMeta' <- gets (fromJust . dontCareMetadata)
               return ((tyA, tMeta'), (tyB, fMeta'))
@@ -703,6 +731,10 @@ instrument blacklist' opts m = do
                                   case meta of
                                     (Just (_, meta')) -> return (f meta', n)
                                     Nothing -> do
+                                      pAddr <- liftM (unpack . PP.render) $ PP.ppOperand p
+                                      pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+                                      pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                                      tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                                       meta' <- gets (fromJust . dontCareMetadata)
                                       return (f meta', n)
 
@@ -760,6 +792,10 @@ instrument blacklist' opts m = do
             (ty, (basePtr, boundPtr, keyPtr, lockPtr)) <- case tgtMeta of
               (Just (ty, meta)) -> return (ty, meta)
               Nothing -> do
+                pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tgt
+                pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+                pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                 ty <- liftM pointerReferent $ typeOf tgt
                 meta <- gets (fromJust . dontCareMetadata)
                 return (ty, meta)
@@ -784,6 +820,10 @@ instrument blacklist' opts m = do
             (_, (basePtr, boundPtr, keyPtr, lockPtr)) <- case srcMeta of
               (Just (ty', meta)) -> return (ty', meta)
               Nothing -> do
+                pAddr <- liftM (unpack . PP.render) $ PP.ppOperand src
+                pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+                pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                 ty' <- liftM pointerReferent $ typeOf src
                 meta <- gets (fromJust . dontCareMetadata)
                 return (ty', meta)
