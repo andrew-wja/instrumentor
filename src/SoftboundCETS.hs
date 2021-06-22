@@ -186,7 +186,7 @@ inspectPointer p
       tp <- typeOf p
       case tp of
         (PointerType {}) -> do
-          tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": unsupported pointer " ++ pp]
+          tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": unsupported pointer " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
           return Nothing
         _ -> error $ "inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": argument is not a pointer " ++ pp
 
@@ -631,7 +631,7 @@ instrument blacklist' opts m = do
           modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
         else do
           pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
-          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ "[" ++ (intercalate ", " pIxs) ++ "]"]
+          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
           return ()
         Helpers.emitNamedInst i
 
