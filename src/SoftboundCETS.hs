@@ -429,10 +429,10 @@ instrument blacklist' opts m = do
       _ <- mapM_ emitRuntimeAPIFunctionDecl rtFuncProtos
       stdlibWrapperProtos <- gets (map snd . assocs . stdlibWrapperPrototypes)
       _ <- mapM_ emitRuntimeAPIFunctionDecl stdlibWrapperProtos
-      -- We must emit non-function global definitions such as type and alias definitions first, otherwise we won't be able to resolve type references!
-      let (funcDefs, otherDefs) = partition Helpers.isFuncDef $ moduleDefinitions m'
-      mapM_ emitDefn otherDefs
-      mapM_ instrumentDefinition funcDefs
+      -- We must handle type definitions first, otherwise we won't be able to resolve named type references
+      let (typeDefs, nonTypeDefs) = partition Helpers.isTypeDef $ moduleDefinitions m'
+      mapM_ (\(TypeDefinition n t) -> typedef n t) typeDefs
+      mapM_ instrumentDefinition nonTypeDefs
       return ()
 
     instrumentDefinition g

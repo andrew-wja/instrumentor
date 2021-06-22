@@ -65,6 +65,11 @@ isFuncDef (GlobalDefinition f@(Function {})) = not $ null $ basicBlocks f
 isFuncDef _ = False
 
 -- | Helper predicate.
+isTypeDef :: Definition -> Bool
+isTypeDef (TypeDefinition {}) = True
+isTypeDef _ = False
+
+-- | Helper predicate.
 getFuncName :: Definition -> Name
 getFuncName (GlobalDefinition f@(Function {})) = name f
 getFuncName _ = undefined
