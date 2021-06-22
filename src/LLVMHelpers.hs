@@ -61,7 +61,7 @@ isFunctionType _ = False
 
 -- | Helper predicate.
 isFuncDef :: Definition -> Bool
-isFuncDef (GlobalDefinition (Function {})) = True
+isFuncDef (GlobalDefinition f@(Function {})) = not $ null $ basicBlocks f
 isFuncDef _ = False
 
 -- | Helper predicate.

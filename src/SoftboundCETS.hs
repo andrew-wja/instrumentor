@@ -19,10 +19,10 @@ import Prelude hiding ((!!))
 import Control.Monad.State hiding (void)
 import Control.Monad.RWS hiding (void)
 import qualified Data.Set
-import Data.Map hiding (map, filter, null, foldr, drop)
+import Data.Map hiding (map, filter, null, foldr, drop, partition)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
-import Data.List (isInfixOf, nub, sort, intercalate)
+import Data.List (isInfixOf, nub, sort, intercalate, partition)
 import Data.Text.Lazy (unpack)
 import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
@@ -429,11 +429,14 @@ instrument blacklist' opts m = do
       _ <- mapM_ emitRuntimeAPIFunctionDecl rtFuncProtos
       stdlibWrapperProtos <- gets (map snd . assocs . stdlibWrapperPrototypes)
       _ <- mapM_ emitRuntimeAPIFunctionDecl stdlibWrapperProtos
-      mapM_ instrumentDefinition $ moduleDefinitions m'
+      -- We must emit non-function global definitions such as type and alias definitions first, otherwise we won't be able to resolve type references!
+      let (funcDefs, otherDefs) = partition Helpers.isFuncDef $ moduleDefinitions m'
+      mapM_ emitDefn otherDefs
+      mapM_ instrumentDefinition funcDefs
       return ()
 
     instrumentDefinition g
-      -- Don't instrument empty functions
+      -- Don't instrument empty functions (i.e. forward declarations)
       | (GlobalDefinition f@(Function {})) <- g, null $ basicBlocks f = emitDefn g
       -- TODO-IMPROVE: Softboundcets does not instrument varargs functions
       | (GlobalDefinition f@(Function {})) <- g, snd $ parameters f = emitDefn g
@@ -637,8 +640,9 @@ instrument blacklist' opts m = do
           -- The pointer created by getelementptr shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
         else do
+          pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
           pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
-          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
+          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " " ++ pAddr ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
           return ()
         Helpers.emitNamedInst i
 
