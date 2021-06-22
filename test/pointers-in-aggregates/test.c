@@ -1,25 +1,36 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-struct foo {
+typedef struct {
   int first;
   int second;
-  int* third;
-};
+} baz;
+
+typedef struct {
+  int first;
+  short second;
+  baz* third;
+} bar;
+
+typedef struct {
+  int first;
+  int second;
+  bar* third;
+} foo;
 
 int main(int argc, char * argv[]) {
-  struct foo *f = (struct foo*)malloc(sizeof(struct foo));
+  // This looks a bit messy, but it's just to prevent the compiler from totally eliding the structure types
+  foo *f = (foo*)malloc(sizeof(foo));
+  baz z = {2, 1};
+  bar b = {1, 1, &z};
+  f->third = &b;
 
-  f->third = (int*)malloc(sizeof(int));
-
-  printf("%p, %d\n", f->third, *(f->third));
-
-  free(f->third);
-
-  // Failure should occur here
-  printf("%p, %d\n", f->third, *(f->third));
+  printf("%p, %d\n", f->third->third, f->third->third->first);
 
   free(f);
+
+  // Failure should occur here
+  printf("%p, %d\n", f->third->third, f->third->third->first);
 
   return 0;
 }
