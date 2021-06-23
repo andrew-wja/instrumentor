@@ -22,7 +22,7 @@ import qualified Data.Set
 import Data.Map hiding (map, filter, null, foldr, drop, partition)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
-import Data.List (isInfixOf, nub, sort, intercalate, partition)
+import Data.List (nub, sort, intercalate, partition)
 import Data.Text.Lazy (unpack)
 import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
@@ -130,16 +130,20 @@ initSBCETSState = emptySBCETSState
 -- | Decide whether the given function symbol is a function that should not be instrumented.
 isIgnoredFunction :: MonadState SBCETSState m => Name -> m Bool
 isIgnoredFunction func
-  | isInfixOfName "__softboundcets" func = return True  -- One of our runtime functions
-  | isInfixOfName "isoc99" func = return True           -- ISO C99 intrinsic functions
-  | isInfixOfName "llvm." func = return True            -- LLVM intrinsic functions
+  | Helpers.isInfixOfName "__softboundcets" func = return True  -- One of our runtime functions
+  | Helpers.isInfixOfName "isoc99" func = return True           -- ISO C99 intrinsic functions
+  | Helpers.isInfixOfName "llvm." func = return True            -- LLVM intrinsic functions
   | otherwise = do
       blist <- gets blacklist
       return $ Data.Set.member func blist               -- Function symbols explicitly blacklisted by the user
-  where
-    isInfixOfName :: String -> Name -> Bool
-    isInfixOfName s (Name s') = isInfixOf s $ show s'
-    isInfixOfName _ _ = False
+
+-- | Decide whether the given function symbol returns a safe pointer
+returnsSafePointer :: MonadState SBCETSState m => Name -> m Bool
+returnsSafePointer func
+  | (mkName "malloc") == func = return True
+  | (mkName "calloc") == func = return True
+  | (mkName "realloc") == func = return True
+  | otherwise = return False
 
 -- | Check if the given function symbol is a function with a runtime wrapper
 isWrappedFunction :: MonadState SBCETSState m => Name -> m Bool
@@ -575,7 +579,7 @@ instrument blacklist' opts m = do
                 pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
                 tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                 ty <- liftM pointerReferent $ typeOf addr
-                dc <- gets (fromJust. dontCareMetadata)
+                dc <- gets (fromJust . dontCareMetadata)
                 return (ty, dc)
             base <- load basePtr 0
             bound <- load boundPtr 0
@@ -621,10 +625,15 @@ instrument blacklist' opts m = do
                 wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
                 Helpers.emitNamedInst $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
               else Helpers.emitNamedInst i
+              -- The function could potentially deallocate any pointer it is passed
+              modify $ \s -> s { safePointers = Data.Set.difference (Data.Set.fromList ptrArgs) $ safePointers s }
               -- Read the metadata for the return value off the shadow stack if it is a pointer
               when (Helpers.isPointerType rt && (not $ Helpers.isFunctionType $ pointerReferent rt)) $ do
                 _ <- emitMetadataLoadFromShadowStack (LocalReference rt v) 0
-                return ()
+                safe <- returnsSafePointer fname
+                if safe
+                then modify $ \s -> s { safePointers = Data.Set.insert (LocalReference rt v) $ safePointers s }
+                else return ()
               emitShadowStackDeallocation
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
@@ -639,7 +648,7 @@ instrument blacklist' opts m = do
             pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
             tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
             ty <- liftM pointerReferent $ typeOf addr
-            dc <- gets (fromJust. dontCareMetadata)
+            dc <- gets (fromJust . dontCareMetadata)
             return (ty, dc)
         ta <- typeOf addr
         ty' <- Helpers.typeIndex ta ixs
@@ -654,6 +663,7 @@ instrument blacklist' opts m = do
           pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
           tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " " ++ pAddr ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
           return ()
+        -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
 
       | (BitCast addr pty@(PointerType {}) _) <- o = do
@@ -668,11 +678,12 @@ instrument blacklist' opts m = do
               pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
               tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               ty' <- liftM pointerReferent $ typeOf addr
-              dc <- gets (fromJust. dontCareMetadata)
+              dc <- gets (fromJust . dontCareMetadata)
               return (ty', dc)
           let bitcastResultPtr = LocalReference pty v
           -- The pointer created by bitcast shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert bitcastResultPtr meta' $ metadataStorage s }
+        -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
 
       | (Select cond tval fval _) <- o = do
@@ -779,6 +790,8 @@ instrument blacklist' opts m = do
                 wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
                 Helpers.emitNamedInst $ Do $ Helpers.rewriteCalledFunctionName wrapperFunctionName o
               else Helpers.emitNamedInst i
+              -- The function could potentially deallocate any pointer it is passed
+              modify $ \s -> s { safePointers = Data.Set.difference (Data.Set.fromList ptrArgs) $ safePointers s }
               emitShadowStackDeallocation
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i

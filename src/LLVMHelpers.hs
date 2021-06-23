@@ -10,6 +10,7 @@ Stability   : experimental
 module LLVMHelpers where
 
 import Data.Map (lookup)
+import Data.List (isInfixOf)
 import Control.Monad.State
 import LLVM.AST
 import LLVM.AST.Constant
@@ -38,6 +39,11 @@ emitNamedInst i
       modifyBlock $ \bb -> bb
         { partialBlockInstrs = partialBlockInstrs bb `snoc` i }
   | (Do o) <- i = emitInstrVoid o
+
+-- | Helper predicate.
+isInfixOfName :: String -> Name -> Bool
+isInfixOfName s (Name s') = isInfixOf s $ show s'
+isInfixOfName _ _ = False
 
 -- | Helper predicate.
 isConstantOperand :: Operand -> Bool
