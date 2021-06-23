@@ -5,10 +5,12 @@ all: ensure-submodules build-llvm build-release-runtimes build-instrumentor dist
 ensure-submodules:
 	git submodule update --init --recursive
 
-patch-llvm:
+llvm-patches/glibc-2.31.patch:
 	mkdir -p llvm-patches
 	cd llvm-patches && wget https://708430.bugs.gentoo.org/attachment.cgi?id=662686 -O- > glibc-2.31.patch
-	patch -p0 -d llvm-project <llvm-patches/glibc-2.31.patch
+
+patch-llvm: llvm-patches/glibc-2.31.patch
+	if ! patch -R --dry-run -s -f -p0 -d llvm-project <llvm-patches/glibc-2.31.patch 2>/dev/null 1>&2; then patch -s -f -p0 -d llvm-project <llvm-patches/glibc-2.31.patch; fi
 
 build-llvm: patch-llvm
 	./scripts/build-llvm.sh
