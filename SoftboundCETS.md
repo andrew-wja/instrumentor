@@ -161,5 +161,6 @@ possible.
 When the first pointer is written to memory and we have stored the metadata for
 that pointer to the runtime disjoint metadata space, all subsequent pointers
 written to memory with the same metadata and temporal and spatial extents could
-simply use a *pointer* to the metadata record of the first. This would save a
-lot of space, because metadata is 4x larger than a pointer.
+simply use a *pointer* to the metadata record of the first. This could
+potentially save a lot of space in pointer-heavy code, because metadata is 4x
+larger than a pointer.
