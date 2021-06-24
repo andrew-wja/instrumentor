@@ -251,7 +251,7 @@ change class. When we come to `free()` the memory pointed to by `%4`, we could
 reuse the metadata which we have in registers `%sbcets_43..46`, extending their
 live ranges. However, the conservative assumption is that there always exists
 an escape of `%4` which could invalidate the metadata held in registers. This
-means the metadata needs reloading from where it is stored in memory.
+means the metadata needs reloading from where it is stored in local variables.
 
 
 ```
