@@ -138,7 +138,28 @@ bounds of the _field_ `a`, which is the core of the issue.
 In order to deal with this case, it is necessary to perform *bounds narrowing*
 checks whenever a pointer is derived from another pointer whose referent is a
 field of an aggregate data type. In this case, the bound on `int *x` should be
-narrowed to `(char*)x + sizeof(int)` rather than `(char*)x + sizeof(foo)` in
-the statement which creates the pointer.
+narrowed in the statement which creates the pointer to `(char*)x + sizeof(int)`
+rather than simply inherited from the parent pointer `f`, whose bound is
+`(char*)x + sizeof(foo)`.
+
+Bounds narrowing introduces extra memory overhead, because now pointer `x`
+requires disjoint metadata from the parent pointer `f`, which must be allocated
+in local variables. However, no extra overhead in the runtime disjoint metadata
+space is incurred because metadata is written to that space unconditionally
+whenever a pointer is stored to memory.
+
 
 ## Quantitative Implementation Concerns (Performance and Overhead)
+
+### Derived Pointer Metadata Storage Optimization
+
+When one pointer is derived from another without bounds narrowing both have the
+same metadata. When both pointers also have matching temporal and spatial
+extents (for example, both point to the same array), a storage optimization is
+possible.
+
+When the first pointer is written to memory and we have stored the metadata for
+that pointer to the runtime disjoint metadata space, all subsequent pointers
+written to memory with the same metadata and temporal and spatial extents could
+simply use a *pointer* to the metadata record of the first. This would save a
+lot of space, because metadata is 4x larger than a pointer.
