@@ -270,7 +270,7 @@ br label %body
 
 ...
 
-%4 = tail call noalias i8* @softboundcets_malloc(i64 16) #4
+%4 = tail call noalias i8* @malloc(i64 16)
 %sbcets_43 = call i8* @__softboundcets_load_base_shadow_stack(i32 0)
 %sbcets_44 = call i8* @__softboundcets_load_bound_shadow_stack(i32 0)
 %sbcets_45 = call i64 @__softboundcets_load_key_shadow_stack(i32 0)
@@ -292,7 +292,7 @@ call void @__softboundcets_store_base_shadow_stack(i8* %sbcets_63, i32 1)
 call void @__softboundcets_store_bound_shadow_stack(i8* %sbcets_64, i32 1)
 call void @__softboundcets_store_key_shadow_stack(i64 %sbcets_65, i32 1)
 call void @__softboundcets_store_lock_shadow_stack(i8* %sbcets_66, i32 1)
-call void @softboundcets_free(i8* %4) #4
+call void @free(i8* %4)
 call void @__softboundcets_deallocate_shadow_stack_space()
 ```
 
@@ -307,6 +307,6 @@ call void @__softboundcets_store_base_shadow_stack(i8* %sbcets_43, i32 1)
 call void @__softboundcets_store_bound_shadow_stack(i8* %sbcets_44, i32 1)
 call void @__softboundcets_store_key_shadow_stack(i64 %sbcets_45, i32 1)
 call void @__softboundcets_store_lock_shadow_stack(i8* %sbcets_46, i32 1)
-call void @softboundcets_free(i8* %4) #4
+call void @free(i8* %4)
 call void @__softboundcets_deallocate_shadow_stack_space()
 ```
