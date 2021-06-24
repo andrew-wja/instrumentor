@@ -95,3 +95,50 @@ For example, if a pointer is `bitcast` to a different type, both pointers share
 the same local metadata variables. The most complex of these are the `select`
 and `phi` instructions, which cause aliasing at runtime that is potentially
 opaque to the compiler.
+
+## Qualitative Implementation Concerns
+
+A key implementation issue for the SoftboundCETS algorithm is the method for
+handling _aggregate_ datatypes, such as structures, arrays, and SIMD vectors.
+All of these datatypes may contain additional pointers which need to be
+instrumented.
+
+When encountering aggregate datatypes, a naive approach is to treat them simply
+as data. This is sufficient to ensure that accesses via a pointer to an
+individual instance of a datatype are safe. It is also
+sufficient to ensure that accesses via any of the contained pointers are safe,
+because these contained pointers will eventually become local variables
+where they are used, which automatically exposes them to instrumentation.
+
+However, the naive approach does not allow an important case to be handled:
+aliasing a pointer to a field of an aggregate. Consider the following short
+example.
+
+```
+typedef struct {
+  int a;
+  float b;
+} foo;
+
+void bad(foo *f) {
+  int *x = &(f->a);
+  float y = *(x+1);
+}
+```
+
+Although `sizeof(int)` and `sizeof(float)` is very likely the same value, this
+is technically incorrect code. It is illegal in C to dereference the `int`
+pointer `x` as a `float` pointer, since these effective types are not
+convertible. Thus the increment to `x` which moves it to point to the next
+field produces a pointer which is not valid. However, if we treat the struct
+`foo` as simple data, the access `*(x+1)` looks valid -- it is both temporally
+and spatially in bounds of the structure. However, it is not spatially in
+bounds of the _field_ `a`, which is the core of the issue.
+
+In order to deal with this case, it is necessary to perform *bounds narrowing*
+checks whenever a pointer is derived from another pointer whose referent is a
+field of an aggregate data type. In this case, the bound on `int *x` should be
+narrowed to `(char*)x + sizeof(int)` rather than `(char*)x + sizeof(foo)` in
+the statement which creates the pointer.
+
+## Quantitative Implementation Concerns (Performance and Overhead)
