@@ -242,7 +242,7 @@ is preserved across the escape to `printf()`. However, we currently assume
 
 Metadata for local variables is stored on the stack in more local variables.
 However, that metadata also lives in registers while it is being created. In
-the case where the metadata corresponds to a `SAFE` pointer, we known that it
+the case where the metadata corresponds to a `SAFE` pointer, we know that it
 has not changed since it was created. This means we can keep it live in
 registers, rather than reload it from local variables. Consider the following
 snippet. We create local variables with `alloca` for the metadata for a 16 byte
