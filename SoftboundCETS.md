@@ -211,3 +211,30 @@ derived pointer in the `SAFE` class. For example, in the second snippet above,
 the spatial bound of the allocation is not changed by the cast, since
 `sizeof(int)` bytes were allocated. Since the bounds are identical, this cast
 is at least spatially safe.
+
+### Escape To Deallocation Optimization
+
+Whenever a pointer escapes the local scope (i.e. the basic block) where it was
+created, it is possible that it could be used to deallocate the memory that it
+points to (if that memory was dynamically allocated). For example, consider the
+following code snippet.
+
+```
+char *t = malloc(1);
+*t = 'a';
+printf("%p is %c\n", t, *t);
+*t = 'b';
+```
+
+Here, the pointer `t` *escapes* the basic block by being passed as an argument
+to the function `printf`. Without doing some analysis, we cannot be certain
+that `printf` will not cause the deallocation of the memory pointed to by `t`.
+Thus, we must insert checks for the dereference `*t = 'b';` because we can no
+longer see that it is evidently safe. Whenever a pointer escapes the basic
+block, it is moved from the `SAFE` to the `UNSAFE` pointer class.
+
+With some escape analysis, it is possible to determine that `printf()` in fact
+does *not* call `free()` on `t`, and thus `t`'s membership in the `SAFE` class
+is preserved across the escape to `printf()`. However, we currently assume
+(conservatively) that all escapes are potential deallocations.
+
