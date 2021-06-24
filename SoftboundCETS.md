@@ -238,3 +238,75 @@ does *not* call `free()` on `t`, and thus `t`'s membership in the `SAFE` class
 is preserved across the escape to `printf()`. However, we currently assume
 (conservatively) that all escapes are potential deallocations.
 
+### Register Allocation of Metadata
+
+Metadata for local variables is stored on the stack in more local variables.
+However, that metadata also lives in registers while it is being created. In
+the case where the metadata corresponds to a `SAFE` pointer, we known that it
+has not changed since it was created. This means we can keep it live in
+registers, rather than reload it from local variables. Consider the following
+snippet. We create local variables with `alloca` for the metadata for a 16 byte
+allocation `%4`. Subsequently we do various things, none of which cause `%4` to
+change class. When we come to `free()` the memory pointer to by `%4`, we could
+reuse the metadata which we have in registers `%sbcets_43..46`, extending their
+live ranges. However, the conservative assumption is that there always exists
+an escape of `%4` which could invalidate the metadata held in registers. This
+means the metadata needs reloading from where it is stored in memory.
+
+
+```
+...
+
+%sbcets_14 = alloca i8*, align 8
+%sbcets_15 = alloca i8*, align 8
+%sbcets_16 = alloca i64, align 8
+%sbcets_17 = alloca i8*, align 8
+...
+br label %body
+
+...
+
+%body:
+
+...
+
+%4 = tail call noalias i8* @softboundcets_malloc(i64 16) #4
+%sbcets_43 = call i8* @__softboundcets_load_base_shadow_stack(i32 0)
+%sbcets_44 = call i8* @__softboundcets_load_bound_shadow_stack(i32 0)
+%sbcets_45 = call i64 @__softboundcets_load_key_shadow_stack(i32 0)
+%sbcets_46 = call i8* @__softboundcets_load_lock_shadow_stack(i32 0)
+store i8* %sbcets_43, i8** %sbcets_14, align 8
+store i8* %sbcets_44, i8** %sbcets_15, align 8
+store i64 %sbcets_45, i64* %sbcets_16, align 8
+store i8* %sbcets_46, i8** %sbcets_17, align 8
+call void @__softboundcets_deallocate_shadow_stack_space()
+
+...
+
+call void @__softboundcets_allocate_shadow_stack_space(i32 2)
+%sbcets_63 = load i8*, i8** %sbcets_14
+%sbcets_64 = load i8*, i8** %sbcets_15
+%sbcets_65 = load i64, i64* %sbcets_16
+%sbcets_66 = load i8*, i8** %sbcets_17
+call void @__softboundcets_store_base_shadow_stack(i8* %sbcets_63, i32 1)
+call void @__softboundcets_store_bound_shadow_stack(i8* %sbcets_64, i32 1)
+call void @__softboundcets_store_key_shadow_stack(i64 %sbcets_65, i32 1)
+call void @__softboundcets_store_lock_shadow_stack(i8* %sbcets_66, i32 1)
+call void @softboundcets_free(i8* %4) #4
+call void @__softboundcets_deallocate_shadow_stack_space()
+```
+
+The reloading of metadata into fresh registers `%sbcets_63..66` here could be
+eliminated with some analysis, improving performance at the cost of increased
+register pressure from the extension of the live ranges of the original
+registers `%sbcets_43..46`.
+
+```
+call void @__softboundcets_allocate_shadow_stack_space(i32 2)
+call void @__softboundcets_store_base_shadow_stack(i8* %sbcets_43, i32 1)
+call void @__softboundcets_store_bound_shadow_stack(i8* %sbcets_44, i32 1)
+call void @__softboundcets_store_key_shadow_stack(i64 %sbcets_45, i32 1)
+call void @__softboundcets_store_lock_shadow_stack(i8* %sbcets_46, i32 1)
+call void @softboundcets_free(i8* %4) #4
+call void @__softboundcets_deallocate_shadow_stack_space()
+```
