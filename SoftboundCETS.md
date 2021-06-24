@@ -179,7 +179,7 @@ char *t = malloc(1);
 ```
 
 ```
-int *t = (int*)malloc(sizeof(int));
+int *t = malloc(sizeof(int));
 *t = 1;
 ```
 
