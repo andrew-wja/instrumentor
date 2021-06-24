@@ -247,7 +247,7 @@ has not changed since it was created. This means we can keep it live in
 registers, rather than reload it from local variables. Consider the following
 snippet. We create local variables with `alloca` for the metadata for a 16 byte
 allocation `%4`. Subsequently we do various things, none of which cause `%4` to
-change class. When we come to `free()` the memory pointer to by `%4`, we could
+change class. When we come to `free()` the memory pointed to by `%4`, we could
 reuse the metadata which we have in registers `%sbcets_43..46`, extending their
 live ranges. However, the conservative assumption is that there always exists
 an escape of `%4` which could invalidate the metadata held in registers. This
