@@ -164,3 +164,50 @@ written to memory with the same metadata and temporal and spatial extents could
 simply use a *pointer* to the metadata record of the first. This could
 potentially save a lot of space in pointer-heavy code, because metadata is 4x
 larger than a pointer.
+
+### Effective Type Cast Optimization
+
+When pointers are cast to different types, the effective typing rules of C come
+into play. The safe thing to do in every case is to treat casts of pointers as
+unsafe. If the parent pointer was a safe pointer, casting that pointer to any
+other type creates a pointer which now requires checking. For example, consider
+the following two snippets of C code.
+
+```
+char *t = malloc(1);
+*t = 'a';
+```
+
+```
+int *t = (int*)malloc(sizeof(int));
+*t = 1;
+```
+
+Because the type of pointer returned by `malloc` is `void*`, which is
+convertible to `char*`, the first snippet does not imply a cast. However, the
+second snippet does imply a cast, from `void*` to `int*`. Most C programmers
+would think of these two pieces of code as being the same, but in fact they are
+not!
+
+Whenever we cast a pointer from one type to another, it is possible for us to
+cause problems. For example, if we cast a `char*` to an `int*`, we will be able
+to access a number of extra bytes of memory through the `int*`.
+
+In order to prevent this, we unconditionally insert checks for pointers
+resulting from casts. Specifically with reference to the above snippets, in
+the first snippet the pointer returned by `malloc` is in the SAFE pointer
+class, and since converting it to a `char*` does not imply an actual cast it
+remains in the SAFE pointer class. There are no intervening uses of the pointer
+which could cause deallocation to occur, and thus the dereference `*t = 'a'` is
+a dereference of a SAFE pointer and does not cause the generation of checks.
+
+However, the pointer in the second snippet is converted to `int*`, which does
+involve a cast. The cast results in an UNSAFE pointer, and so the dereference
+`*t = 1` is of an UNSAFE pointer, which causes the generation of checks.
+
+In order to introduce the minimal quantity of checks, we should consult the C
+effective typing rules to determine when a cast preserves the membership of the
+derived pointer in the SAFE class. For example, in the second snippet above,
+the spatial bound of the allocation is not changed by the cast, since
+`sizeof(int)` bytes were allocated. Since the bounds are identical, this cast
+is at least spatially safe.
