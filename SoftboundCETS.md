@@ -195,19 +195,19 @@ to access a number of extra bytes of memory through the `int*`.
 
 In order to prevent this, we unconditionally insert checks for pointers
 resulting from casts. Specifically with reference to the above snippets, in
-the first snippet the pointer returned by `malloc` is in the SAFE pointer
-class, and since converting it to a `char*` does not imply an actual cast it
-remains in the SAFE pointer class. There are no intervening uses of the pointer
+the first snippet the pointer returned by `malloc` is in the `SAFE` pointer
+class, and since converting it to a `char*` does not imply an actual cast, it
+remains in the `SAFE` pointer class. There are no intervening uses of the pointer
 which could cause deallocation to occur, and thus the dereference `*t = 'a'` is
-a dereference of a SAFE pointer and does not cause the generation of checks.
+a dereference of a `SAFE` pointer and does not cause the generation of checks.
 
 However, the pointer in the second snippet is converted to `int*`, which does
-involve a cast. The cast results in an UNSAFE pointer, and so the dereference
-`*t = 1` is of an UNSAFE pointer, which causes the generation of checks.
+involve a cast. The cast results in an `UNSAFE` pointer, and so the dereference
+`*t = 1` is of an `UNSAFE` pointer, which causes the generation of checks.
 
 In order to introduce the minimal quantity of checks, we should consult the C
 effective typing rules to determine when a cast preserves the membership of the
-derived pointer in the SAFE class. For example, in the second snippet above,
+derived pointer in the `SAFE` class. For example, in the second snippet above,
 the spatial bound of the allocation is not changed by the cast, since
 `sizeof(int)` bytes were allocated. Since the bounds are identical, this cast
 is at least spatially safe.
