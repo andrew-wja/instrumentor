@@ -233,7 +233,7 @@ Thus, we must insert checks for the dereference `*t = 'b';` because we can no
 longer see that it is evidently safe. Whenever a pointer escapes the basic
 block, it is moved from the `SAFE` to the `UNSAFE` pointer class.
 
-With some escape analysis, it is possible to determine that `printf()` in fact
+With some analysis, it is possible to determine that `printf()` in fact
 does *not* call `free()` on `t`, and thus `t`'s membership in the `SAFE` class
 is preserved across the escape to `printf()`. However, we currently assume
 (conservatively) that all escapes are potential deallocations.
