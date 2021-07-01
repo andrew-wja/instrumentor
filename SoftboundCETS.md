@@ -151,6 +151,35 @@ whenever a pointer is stored to memory.
 
 ## Quantitative Implementation Concerns (Performance and Overhead)
 
+### Dominated Spatial Check Elimination
+
+When one load or store is dominated by another, all execution paths leading to
+the second operation include the first operation. In this case, the spatial
+checks for the second (and subsequent) dominated operation(s) with the same
+target address can be eliminated. The spatial check generated for the first
+operation will either have succeeded or caused execution to abort, so the
+second and subsequent dominated operations are either correct or will not be
+executed. This optimization is implemented in the original SoftboundCETS.
+
+### Dominated Temporal Check Elimination
+
+When multiple load or store instructions access the same _root object_, only
+the first needs to perform temporal checks, because the result of the check
+will be the same for the others. This optimization is only correct if we can
+determine that there is no intervening call to `free()` the root object.
+
+This optimization is present in the original SoftboundCETS implementation, but
+it does not include an escape analysis to check for calls to `free()` and is
+therefore *not correct*. Only the first access to any given root object checks
+if the object is allocated, and all subsequent accesses to the same root object
+are not instrumented with temporal checks. If the root object being accessed is
+freed after the first access but before the other accesses, the subsequent
+accesses will not be recognized as use-after-free.
+
+The original SoftboundCETS implementation performs this optimization at the
+basic block level and at the function level. With the addition of an escape
+analysis, this optimization would be correct.
+
 ### Derived Pointer Metadata Storage Optimization
 
 When one pointer is derived from another without bounds narrowing both have the
