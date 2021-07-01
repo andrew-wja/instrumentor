@@ -192,7 +192,8 @@ that pointer to the runtime disjoint metadata space, all subsequent pointers
 written to memory with the same metadata and temporal and spatial extents could
 simply use a *pointer* to the metadata record of the first. This could
 potentially save a lot of space in pointer-heavy code, because metadata is 4x
-larger than a pointer.
+larger than a pointer. This optimization is not implemented in the original
+SoftboundCETS.
 
 ### Effective Type Cast Optimization
 
@@ -239,7 +240,8 @@ effective typing rules to determine when a cast preserves the membership of the
 derived pointer in the `SAFE` class. For example, in the second snippet above,
 the spatial bound of the allocation is not changed by the cast, since
 `sizeof(int)` bytes were allocated. Since the bounds are identical, this cast
-is at least spatially safe.
+is spatially safe. This optimization is not implemented in the original
+SoftboundCETS.
 
 ### Escape To Deallocation Optimization
 
@@ -262,10 +264,11 @@ Thus, we must insert checks for the dereference `*t = 'b';` because we can no
 longer see that it is evidently safe. Whenever a pointer escapes the basic
 block, it is moved from the `SAFE` to the `UNSAFE` pointer class.
 
-With some analysis, it is possible to determine that `printf()` in fact
-does *not* call `free()` on `t`, and thus `t`'s membership in the `SAFE` class
-is preserved across the escape to `printf()`. However, we currently assume
-(conservatively) that all escapes are potential deallocations.
+With some analysis, it is possible to determine that `printf()` in fact does
+*not* call `free()` on `t`, and thus `t`'s membership in the `SAFE` class is
+preserved across the escape to `printf()`. However, we currently assume
+(conservatively) that all escapes are potential deallocations. This
+optimization is not implemented in the original SoftboundCETS.
 
 ### Register Allocation of Metadata
 
@@ -339,3 +342,5 @@ call void @__softboundcets_store_lock_shadow_stack(i8* %sbcets_46, i32 1)
 call void @free(i8* %4)
 call void @__softboundcets_deallocate_shadow_stack_space()
 ```
+
+This optimization is not implemented in the original SoftboundCETS.
