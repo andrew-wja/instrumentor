@@ -44,19 +44,11 @@ data PointerClass = Safe | Unsafe
 -- | Metadata is a 4-tuple of pointers to stack-allocated entities:
 --   the base pointer, bound pointer, key value, and lock location
 --   associated with some user pointer.
-type Metadata = (Operand, Operand, Operand, Operand)
-
-getBase :: Metadata -> Operand
-getBase (base, _, _, _) = base
-
-getBound :: Metadata -> Operand
-getBound (_, bound, _, _) = bound
-
-getKey :: Metadata -> Operand
-getKey (_, _, key, _) = key
-
-getLock :: Metadata -> Operand
-getLock (_, _, _, lock) = lock
+data Metadata = Metadata { metadataBase :: Operand
+                         , metadataBound :: Operand
+                         , metadataKey :: Operand
+                         , metadataLock :: Operand
+                         }
 
 type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
 
@@ -215,8 +207,9 @@ allocateLocalMetadataStorage p = do
     boundPtr <- alloca (ptr i8) Nothing 8
     keyPtr <- alloca (i64) Nothing 8
     lockPtr <- alloca (ptr i8) Nothing 8
-    modify $ \s -> s { metadataStorage = Data.Map.insert p (basePtr, boundPtr, keyPtr, lockPtr) $ metadataStorage s }
-    return (basePtr, boundPtr, keyPtr, lockPtr)
+    let meta = Metadata basePtr boundPtr keyPtr lockPtr
+    modify $ \s -> s { metadataStorage = Data.Map.insert p meta $ metadataStorage s }
+    return meta
   else do
     fname <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
     pp <- liftM (unpack . PP.render) $ PP.ppOperand p
@@ -332,13 +325,13 @@ emitRuntimeMetadataLoad addr
         gets (fromJust . dontCareMetadata)
       else do
         addr' <- bitcast addr (ptr i8)
-        (basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage addr
+        meta@(Metadata basePtr boundPtr keyPtr lockPtr) <- getLocalMetadataStorage addr
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_load" [addr', basePtr, boundPtr, keyPtr, lockPtr]
         emitCheck <- gets (CLI.emitChecks . options)
         when emitCheck $ do
           _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [basePtr, boundPtr, keyPtr, lockPtr]
           return ()
-        return (basePtr, boundPtr, keyPtr, lockPtr)
+        return meta
   | (ConstantOperand {}) <- addr = do
       -- TODO-IMPROVE: If asked to load the metadata for a constant pointer expression or global variable, we currently just return the don't-care metadata.
       -- I believe we can just call __softboundcets_metadata_load here but we need to make sure that we are actually setting up the metadata
@@ -380,14 +373,14 @@ emitShadowStackDeallocation = do
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
 
--- | Store the metadata for the given pointer into the local variables allocated to hold it.
-emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Metadata -> m Metadata
+-- | Store the metadata in registers for the given pointer into the local variables allocated to hold it.
+emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> (Operand, Operand, Operand, Operand) -> m Metadata
 emitMetadataStoreToLocalVariables p (base, bound, key, lock) = do
-  meta@(basePtr, boundPtr, keyPtr, lockPtr) <- getLocalMetadataStorage p
-  store basePtr 8 base
-  store boundPtr 8 bound
-  store keyPtr 8 key
-  store lockPtr 8 lock
+  meta <- getLocalMetadataStorage p
+  store (metadataBase meta) 8 base
+  store (metadataBound meta) 8 bound
+  store (metadataKey meta) 8 key
+  store (metadataLock meta) 8 lock
   return meta
 
 -- | Load the metadata for a pointer function parameter from the shadow stack.
@@ -404,33 +397,23 @@ emitMetadataLoadFromShadowStack p ix = do
 emitMetadataStoreToShadowStack :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m) => Maybe Name -> Operand -> Integer -> m ()
 emitMetadataStoreToShadowStack callee p ix = do
   meta <- inspectPointer p
-  case meta of
-    (Just (_, (basePtr, boundPtr, keyPtr, lockPtr))) -> do
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
-      return ()
+  meta' <- case meta of
+    (Just (_, meta')) -> return meta'
     Nothing -> do
       fname <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
       pp <- liftM (unpack . PP.render) $ PP.ppOperand p
       tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (unpack $ PP.ppll $ fromJust callee)]
-      (basePtr, boundPtr, keyPtr, lockPtr) <- gets (fromJust . dontCareMetadata)
-      ix' <- pure $ int32 ix
-      base <- load basePtr 0
-      bound <- load boundPtr 0
-      key <- load keyPtr 0
-      lock <- load lockPtr 0
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
-      return ()
+      gets (fromJust . dontCareMetadata)
+  ix' <- pure $ int32 ix
+  base <- load (metadataBase meta') 0
+  bound <- load (metadataBound meta') 0
+  key <- load (metadataKey meta') 0
+  lock <- load (metadataLock meta') 0
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [base, ix']
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [bound, ix']
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [key, ix']
+  _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock, ix']
+  return ()
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -583,7 +566,7 @@ instrument blacklist' opts m = do
           case addrClass of
             Unsafe -> do
               meta <- inspectPointer addr
-              (ty, (basePtr, boundPtr, keyPtr, lockPtr)) <- case meta of
+              (ty, meta') <- case meta of
                 (Just (ty, meta')) -> return (ty, meta')
                 Nothing -> do
                   pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
@@ -593,15 +576,15 @@ instrument blacklist' opts m = do
                   ty <- liftM pointerReferent $ typeOf addr
                   dc <- gets (fromJust . dontCareMetadata)
                   return (ty, dc)
-              base <- load basePtr 0
-              bound <- load boundPtr 0
+              base <- load (metadataBase meta') 0
+              bound <- load (metadataBound meta') 0
               addr' <- bitcast addr (ptr i8)
               tySize <- sizeof 64 ty
               -- Check the load is spatially in bounds
               _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [base, bound, addr', tySize]
               -- Check the load is temporally in bounds
-              lock <- load lockPtr 0
-              key <- load keyPtr 0
+              key <- load (metadataKey meta') 0
+              lock <- load (metadataLock meta') 0
               _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lock, key]
               return ()
             Safe -> return ()
@@ -739,12 +722,12 @@ instrument blacklist' opts m = do
               tyB <- liftM pointerReferent $ typeOf fval
               fMeta' <- gets (fromJust . dontCareMetadata)
               return ((tyA, tMeta'), (tyB, fMeta'))
-          basePtr <- select cond (getBase tMeta') (getBase fMeta')
-          boundPtr <- select cond (getBound tMeta') (getBound fMeta')
-          keyPtr <- select cond (getKey tMeta') (getKey fMeta')
-          lockPtr <- select cond (getLock tMeta') (getLock fMeta')
+          basePtr <- select cond (metadataBase tMeta') (metadataBase fMeta')
+          boundPtr <- select cond (metadataBound tMeta') (metadataBound fMeta')
+          keyPtr <- select cond (metadataKey tMeta') (metadataKey fMeta')
+          lockPtr <- select cond (metadataLock tMeta') (metadataLock fMeta')
           let newPtr = LocalReference (ptr ty) v
-          let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
+          let newMeta = Metadata basePtr boundPtr keyPtr lockPtr
           case (tClass, fClass) of
             (Safe, Safe) -> markPointer newPtr Safe
             _ -> markPointer newPtr Unsafe
@@ -766,16 +749,16 @@ instrument blacklist' opts m = do
                                       return (f meta', n)
 
         when (not $ Helpers.isFunctionType ty) $ do
-          incomingBases <- forM incoming (phiMeta getBase)
+          incomingBases <- forM incoming (phiMeta metadataBase)
           basePtr <- phi incomingBases
-          incomingBounds <- forM incoming (phiMeta getBound)
+          incomingBounds <- forM incoming (phiMeta metadataBound)
           boundPtr <- phi incomingBounds
-          incomingKeys <- forM incoming (phiMeta getKey)
+          incomingKeys <- forM incoming (phiMeta metadataKey)
           keyPtr <- phi incomingKeys
-          incomingLocks <- forM incoming (phiMeta getLock)
+          incomingLocks <- forM incoming (phiMeta metadataLock)
           lockPtr <- phi incomingLocks
           let newPtr = LocalReference (ptr ty) v
-          let newMeta = (basePtr, boundPtr, keyPtr, lockPtr)
+          let newMeta = Metadata basePtr boundPtr keyPtr lockPtr
           -- The pointer created by phi shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
 
@@ -819,7 +802,7 @@ instrument blacklist' opts m = do
           case tgtClass of
             Unsafe -> do
               tgtMeta <- inspectPointer tgt
-              (ty, (basePtr, boundPtr, keyPtr, lockPtr)) <- case tgtMeta of
+              (ty, tgtMeta') <- case tgtMeta of
                 (Just (ty, meta)) -> return (ty, meta)
                 Nothing -> do
                   pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tgt
@@ -829,15 +812,15 @@ instrument blacklist' opts m = do
                   ty <- liftM pointerReferent $ typeOf tgt
                   meta <- gets (fromJust . dontCareMetadata)
                   return (ty, meta)
-              tgtBase <- load basePtr 0
-              tgtBound <- load boundPtr 0
+              tgtBase <- load (metadataBase tgtMeta') 0
+              tgtBound <- load (metadataBound tgtMeta') 0
               tgtAddr <- bitcast tgt (ptr i8)
               tySize <- sizeof 64 ty
               -- Check the store is spatially in bounds
               _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [tgtBase, tgtBound, tgtAddr, tySize]
               -- Check the store is temporally in bounds
-              tgtKey <- load keyPtr 0
-              tgtLock <- load lockPtr 0
+              tgtKey <- load (metadataKey tgtMeta') 0
+              tgtLock <- load (metadataLock tgtMeta') 0
               _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [tgtLock, tgtKey]
               return ()
             Safe -> return ()
@@ -848,7 +831,7 @@ instrument blacklist' opts m = do
           ty <- typeOf src
           when (Helpers.isPointerType ty && (not $ Helpers.isFunctionType $ pointerReferent ty)) $ do
             srcMeta <- inspectPointer src
-            (_, (basePtr, boundPtr, keyPtr, lockPtr)) <- case srcMeta of
+            (_, srcMeta') <- case srcMeta of
               (Just (ty', meta)) -> return (ty', meta)
               Nothing -> do
                 pAddr <- liftM (unpack . PP.render) $ PP.ppOperand src
@@ -859,10 +842,10 @@ instrument blacklist' opts m = do
                 meta <- gets (fromJust . dontCareMetadata)
                 return (ty', meta)
             tgtAddr <- bitcast tgt (ptr i8)
-            srcBase <- load basePtr 0
-            srcBound <- load boundPtr 0
-            srcKey <- load keyPtr 0
-            srcLock <- load lockPtr 0
+            srcBase <- load (metadataBase srcMeta') 0
+            srcBound <- load (metadataBound srcMeta') 0
+            srcKey <- load (metadataKey srcMeta') 0
+            srcLock <- load (metadataLock srcMeta') 0
             -- Write the metadata for the stored pointer to the runtime
             _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgtAddr, srcBase, srcBound, srcKey, srcLock]
             return ()
