@@ -169,28 +169,76 @@ inspectPointer p
         tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]
         return Nothing
       else gets (Just . (ty,) . (! p) . metadataStorage)
+
   -- TODO-IMPROVE: Constant expressions of pointer type and global pointers currently just get the don't-care metadata.
   -- This is sufficient for performance testing (since it doesn't alter the amount of work done) but not for real-world use.
-  {-
-  | (ConstantOperand (Const.Null (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand (Const.GlobalReference (PointerType ty _) n)) <- p = return Nothing
-  | (ConstantOperand (Const.GetElementPtr _ addr ixs)) <- p = do
-      ty <- typeIndex (typeOf addr) (map ConstantOperand ixs)
-      return Nothing
-  | (ConstantOperand (Const.IntToPtr _ (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand (Const.BitCast _ (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand (Const.AddrSpaceCast _ (PointerType ty _))) <- p = return Nothing
-  | (ConstantOperand op@(Const.Select _ _ _)) <- p, (PointerType ty _) <- typeOf op = return Nothing
-  | (ConstantOperand (Const.ExtractElement v _)) <- p, (PointerType ty _) <- elementType $ typeOf v = return Nothing
-  | (ConstantOperand (Const.ExtractValue agg ixs)) <- p = do
-      ty <- typeIndex (typeOf agg) (map (ConstantOperand . Const.Int 32 . fromIntegral) ixs)
-      return Nothing
-  -}
-  | otherwise = do
+
+  | (ConstantOperand (Const.Null (PointerType {}))) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.Undef (PointerType {}))) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.GlobalReference (PointerType {}) _)) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.GetElementPtr _ _ _)) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.IntToPtr _ (PointerType {}))) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.BitCast _ (PointerType {}))) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.AddrSpaceCast _ (PointerType {}))) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.Select _ _ _)) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.ExtractElement _ _)) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | (ConstantOperand (Const.ExtractValue _ _)) <- p = do
+      benchmarking <- gets (CLI.benchmarking . options)
+      if benchmarking
+      then return Nothing
+      else unimplemented p
+
+  | otherwise = unimplemented p
+  where
+    unimplemented p' = do
       fname <- gets (name . fromJust . currentFunction)
-      pp <- liftM (unpack . PP.render) $ PP.ppOperand p
-      tp <- typeOf p
+      pp <- liftM (unpack . PP.render) $ PP.ppOperand p'
+      tp <- typeOf p'
       case tp of
         (PointerType {}) -> do
           tell ["inspectPointer: in function " ++ (unpack $ PP.ppll fname) ++ ": unsupported pointer " ++ pp ++ ", instrumentation of " ++ pp ++ " will not be possible"]

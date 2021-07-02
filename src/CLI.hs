@@ -17,6 +17,7 @@ data Options = Options { instrumentLoad :: Bool -- ^ Whether to instrument load 
                        , instrumentCall :: Bool -- ^ Whether to instrument function calls
                        , emitChecks :: Bool -- ^ Whether to emit runtime metadata validity checks
                        , instrumentStack :: Bool -- ^ Whether to instrument stack allocations
+                       , benchmarking :: Bool -- ^ Whether to generate code in 'benchmarking mode'
                        , file :: String -- ^ The path to the input module for instrumentation
                        , blacklist :: String -- ^ Function symbols in the blacklist will not be instrumented
                        }
@@ -28,6 +29,7 @@ defaultOptions = Options { instrumentLoad = False
                          , instrumentCall = False
                          , emitChecks = False
                          , instrumentStack = False
+                         , benchmarking = False
                          , file = ""
                          , blacklist = ""
                          }
@@ -52,6 +54,9 @@ optParser = Options
   <*> switch
       ( long "stack"
       <> help "Instrument stack allocations" )
+  <*> switch
+      ( long "benchmark"
+      <> help "Benchmarking mode (generate all checks as normal but use don't-care metadata)" )
   <*> argument str
       ( metavar "FILE"
       <> help "LLVM module to instrument" )

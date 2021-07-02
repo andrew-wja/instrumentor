@@ -344,3 +344,17 @@ call void @__softboundcets_deallocate_shadow_stack_space()
 ```
 
 This optimization is not implemented in the original SoftboundCETS.
+
+### Realloc Dangling Pointer Improvement
+
+In C, when someone uses `realloc`, pointers to the old allocation other than
+the pointer passed to `realloc` become dangling pointers. If the implementation
+of `realloc` extends the old allocation in-place, they will continue to work,
+but if the implementation of `realloc` moves the allocation, they will point to
+invalid memory. In this case it is as if they point to a freed allocation.
+
+If we treat realloc as if it _always_ moves the allocation, we can catch these
+dangling pointers. We would do this by giving the pointer returned by `realloc`
+a fresh key instead of reusing the key from the old allocation.
+
+This is not done in the original SoftboundCETS implementation.
