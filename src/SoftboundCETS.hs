@@ -89,6 +89,14 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Map.empty Data.Set.empty
                                Nothing Data.Map.empty
 
+-- | Mark a pointer as belonging to a particular 'PointerClass'.
+mark :: MonadState SBCETSState m => Operand -> PointerClass -> m ()
+mark p c = modify $ \s -> s { classifications = Data.Map.insert p c $ classifications s }
+
+-- | Query the 'PointerClass' of a pointer, defaulting to 'Unsafe'.
+query :: MonadState SBCETSState m => Operand -> m PointerClass
+query p = gets (maybe Unsafe id . (Data.Map.lookup p . classifications))
+
 -- | The initial 'SBCETSState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSState :: SBCETSState
 initSBCETSState = emptySBCETSState
@@ -139,14 +147,6 @@ returnsSafePointer func
   | (mkName "calloc") == func = return True
   | (mkName "realloc") == func = return True
   | otherwise = return False
-
--- | Mark a pointer as belonging to a particular 'PointerClass'.
-markPointer :: MonadState SBCETSState m => Operand -> PointerClass -> m ()
-markPointer p c = modify $ \s -> s { classifications = Data.Map.insert p c $ classifications s }
-
--- | Query the 'PointerClass' of a pointer, defaulting to 'Unsafe'.
-pointerClass :: MonadState SBCETSState m => Operand -> m PointerClass
-pointerClass p = gets (maybe Unsafe id . (Data.Map.lookup p . classifications))
 
 -- | Check if the given function symbol is a function with a runtime wrapper
 isWrappedFunction :: MonadState SBCETSState m => Name -> m Bool
@@ -461,7 +461,7 @@ instrument blacklist' opts m = do
           gType' <- typeOf (fromJust $ initializer g)
           let gType = ptr gType'
           -- The address of a global variable is always safe
-          markPointer (ConstantOperand $ Const.GlobalReference gType gName) Safe
+          mark (ConstantOperand $ Const.GlobalReference gType gName) Safe
           -- TODO-IMPROVE: right now all pointers to globals get don't-care metadata from 'inspectPointer' so we can skip creating metadata here for performance testing.
       | otherwise = do
         pg <- liftM (unpack . PP.render) $ PP.ppGlobal g
@@ -536,7 +536,7 @@ instrument blacklist' opts m = do
         when (not $ Helpers.isFunctionType ty) $ do -- Don't instrument function pointers
           let resultPtr = LocalReference (ptr ty) v
             -- The address of a stack allocation is always safe
-          markPointer resultPtr Safe
+          mark resultPtr Safe
           enable <- gets (CLI.instrumentStack . options)
           when enable $ do
             eltSize <- sizeof 64 ty
@@ -562,7 +562,7 @@ instrument blacklist' opts m = do
       | (Load _ addr _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)
         when enable $ do
-          addrClass <- pointerClass addr
+          addrClass <- query addr
           case addrClass of
             Unsafe -> do
               meta <- inspectPointer addr
@@ -622,14 +622,14 @@ instrument blacklist' opts m = do
                 Helpers.emitNamedInst $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
               else Helpers.emitNamedInst i
               -- The function could potentially deallocate any pointer it is passed
-              mapM_ (flip markPointer $ Unsafe) $ Data.Set.fromList ptrArgs
+              mapM_ (flip mark $ Unsafe) $ Data.Set.fromList ptrArgs
               -- Read the metadata for the return value off the shadow stack if it is a pointer
               when (Helpers.isPointerType rt && (not $ Helpers.isFunctionType $ pointerReferent rt)) $ do
                 _ <- emitMetadataLoadFromShadowStack (LocalReference rt v) 0
                 safe <- returnsSafePointer fname
                 if safe
-                then markPointer (LocalReference rt v) Safe
-                else markPointer (LocalReference rt v) Unsafe
+                then mark (LocalReference rt v) Safe
+                else mark (LocalReference rt v) Unsafe
               emitShadowStackDeallocation
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
@@ -654,7 +654,7 @@ instrument blacklist' opts m = do
           -- The pointer created by getelementptr shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert gepResultPtr meta' $ metadataStorage s }
           -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
-          markPointer gepResultPtr Unsafe
+          mark gepResultPtr Unsafe
         else do
           -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
           pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
@@ -681,16 +681,16 @@ instrument blacklist' opts m = do
           -- The pointer created by bitcast shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert bitcastResultPtr meta' $ metadataStorage s }
           -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
-          markPointer bitcastResultPtr Unsafe
+          mark bitcastResultPtr Unsafe
         Helpers.emitNamedInst i
 
       | (Select cond tval fval _) <- o = do
         Helpers.emitNamedInst i
         valTy <- typeOf tval
         when (Helpers.isPointerType valTy && (not $ Helpers.isFunctionType $ pointerReferent valTy)) $ do
-          tClass <- pointerClass tval
+          tClass <- query tval
           tMeta <- inspectPointer tval
-          fClass <- pointerClass fval
+          fClass <- query fval
           fMeta <- inspectPointer fval
           ((ty, tMeta'), (_, fMeta')) <- case (tMeta, fMeta) of
             (Just a, Just b) -> return (a, b)
@@ -729,8 +729,8 @@ instrument blacklist' opts m = do
           let newPtr = LocalReference (ptr ty) v
           let newMeta = Metadata basePtr boundPtr keyPtr lockPtr
           case (tClass, fClass) of
-            (Safe, Safe) -> markPointer newPtr Safe
-            _ -> markPointer newPtr Unsafe
+            (Safe, Safe) -> mark newPtr Safe
+            _ -> mark newPtr Unsafe
           -- The pointer created by select shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert newPtr newMeta $ metadataStorage s }
 
@@ -790,7 +790,7 @@ instrument blacklist' opts m = do
                 Helpers.emitNamedInst $ Do $ Helpers.rewriteCalledFunctionName wrapperFunctionName o
               else Helpers.emitNamedInst i
               -- The function could potentially deallocate any pointer it is passed
-              mapM_ (flip markPointer $ Unsafe) $ Data.Set.fromList ptrArgs
+              mapM_ (flip mark $ Unsafe) $ Data.Set.fromList ptrArgs
               emitShadowStackDeallocation
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
@@ -798,7 +798,7 @@ instrument blacklist' opts m = do
       | (Store _ tgt src _ _ _) <- o = do
         enable <- gets (CLI.instrumentStore . options)
         when enable $ do
-          tgtClass <- pointerClass tgt
+          tgtClass <- query tgt
           case tgtClass of
             Unsafe -> do
               tgtMeta <- inspectPointer tgt
