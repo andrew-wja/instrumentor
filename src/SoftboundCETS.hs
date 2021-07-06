@@ -737,26 +737,23 @@ instrument blacklist' opts m = do
       | (Phi (PointerType ty _) incoming _) <- o = do
         Helpers.emitNamedInst i
 
-        let phiMeta f (p, n) = do meta <- inspectPointer p
-                                  case meta of
-                                    (Just x) -> return (f $ snd x, n)
-                                    Nothing -> do
-                                      pAddr <- liftM (unpack . PP.render) $ PP.ppOperand p
-                                      pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-                                      pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
-                                      tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-                                      dc <- gets (fromJust . dontCareMetadata)
-                                      return (f dc, n)
+        let phiMeta (p, n) = do meta <- inspectPointer p
+                                case meta of
+                                  (Just x) -> return (snd x, n)
+                                  Nothing -> do
+                                    pAddr <- liftM (unpack . PP.render) $ PP.ppOperand p
+                                    pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
+                                    pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                                    tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
+                                    dc <- gets (fromJust . dontCareMetadata)
+                                    return (dc, n)
 
         when (not $ Helpers.isFunctionType ty) $ do
-          incomingBases <- forM incoming (phiMeta metadataBase)
-          basePtr <- phi incomingBases
-          incomingBounds <- forM incoming (phiMeta metadataBound)
-          boundPtr <- phi incomingBounds
-          incomingKeys <- forM incoming (phiMeta metadataKey)
-          keyPtr <- phi incomingKeys
-          incomingLocks <- forM incoming (phiMeta metadataLock)
-          lockPtr <- phi incomingLocks
+          incomingMeta <- forM incoming phiMeta
+          basePtr <- phi $ map (\(x, n) -> (metadataBase x, n)) incomingMeta
+          boundPtr <- phi $ map (\(x, n) -> (metadataBound x, n)) incomingMeta
+          keyPtr <- phi $ map (\(x, n) -> (metadataKey x, n)) incomingMeta
+          lockPtr <- phi $ map (\(x, n) -> (metadataLock x, n)) incomingMeta
           let newPtr = LocalReference (ptr ty) v
           let newMeta = Metadata basePtr boundPtr keyPtr lockPtr
           -- The pointer created by phi shares metadata storage with the parent pointer
