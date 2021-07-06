@@ -745,8 +745,8 @@ instrument blacklist' opts m = do
                                       pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
                                       pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
                                       tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-                                      meta' <- gets (fromJust . dontCareMetadata)
-                                      return (f meta', n)
+                                      dc <- gets (fromJust . dontCareMetadata)
+                                      return (f dc, n)
 
         when (not $ Helpers.isFunctionType ty) $ do
           incomingBases <- forM incoming (phiMeta metadataBase)
