@@ -590,8 +590,9 @@ instrument blacklist' opts m = do
               return ()
             Safe -> return ()
 
-          Helpers.emitNamedInst i
-          -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the loaded address.
+        Helpers.emitNamedInst i
+
+        when enable $ do -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the loaded address.
           ta <- typeOf addr
           when ((Helpers.isPointerType $ pointerReferent ta) &&
                 (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta)) $ do
