@@ -160,6 +160,7 @@ isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapper
 inspectPointer :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, Metadata))
 inspectPointer p
   | (LocalReference (PointerType ty _) _) <- p, Helpers.isFunctionType ty = return Nothing
+  -- TODO-IMPROVE: Function pointers currently get don't-care metadata but they are supposed to be checked for spatial safety at callsites.
   | (LocalReference (PointerType ty _) _) <- p = do
       pp <- liftM (unpack . PP.render) $ PP.ppOperand p
       fname <- gets (name . fromJust . currentFunction)
