@@ -573,9 +573,9 @@ instrument blacklist' opts m = do
                   pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
                   pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-                  ty <- liftM pointerReferent $ typeOf addr
+                  pRefTy <- liftM pointerReferent $ typeOf addr
                   dc <- gets (fromJust . dontCareMetadata)
-                  return (ty, dc)
+                  return (pRefTy, dc)
               base <- load (metadataBase meta') 0
               bound <- load (metadataBound meta') 0
               addr' <- bitcast addr (ptr i8)
@@ -643,9 +643,9 @@ instrument blacklist' opts m = do
             pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
             pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
             tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-            ty <- liftM pointerReferent $ typeOf addr
+            pRefTy <- liftM pointerReferent $ typeOf addr
             dc <- gets (fromJust . dontCareMetadata)
-            return (ty, dc)
+            return (pRefTy, dc)
         ta <- typeOf addr
         ty' <- Helpers.typeIndex ta ixs
         if (isJust ty')
@@ -674,9 +674,9 @@ instrument blacklist' opts m = do
               pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
               pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
               tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-              ty' <- liftM pointerReferent $ typeOf addr
+              pRefTy <- liftM pointerReferent $ typeOf addr
               dc <- gets (fromJust . dontCareMetadata)
-              return (ty', dc)
+              return (pRefTy, dc)
           let bitcastResultPtr = LocalReference pty v
           -- The pointer created by bitcast shares metadata storage with the parent pointer
           modify $ \s -> s { metadataStorage = Data.Map.insert bitcastResultPtr meta' $ metadataStorage s }
@@ -809,9 +809,9 @@ instrument blacklist' opts m = do
                   pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
                   pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-                  ty <- liftM pointerReferent $ typeOf tgt
-                  meta <- gets (fromJust . dontCareMetadata)
-                  return (ty, meta)
+                  pRefTy <- liftM pointerReferent $ typeOf tgt
+                  dc <- gets (fromJust . dontCareMetadata)
+                  return (pRefTy, dc)
               tgtBase <- load (metadataBase tgtMeta') 0
               tgtBound <- load (metadataBound tgtMeta') 0
               tgtAddr <- bitcast tgt (ptr i8)
@@ -838,9 +838,9 @@ instrument blacklist' opts m = do
                 pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
                 pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
                 tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
-                ty' <- liftM pointerReferent $ typeOf src
-                meta <- gets (fromJust . dontCareMetadata)
-                return (ty', meta)
+                pRefTy <- liftM pointerReferent $ typeOf src
+                dc <- gets (fromJust . dontCareMetadata)
+                return (pRefTy, dc)
             tgtAddr <- bitcast tgt (ptr i8)
             srcBase <- load (metadataBase srcMeta') 0
             srcBound <- load (metadataBound srcMeta') 0
