@@ -6,7 +6,3 @@
 	path = llvm-hs
 	url = https://github.com/andrew-wja/llvm-hs.git
 	branch = llvm-9
-[submodule "llvm-hs-pretty"]
-	path = llvm-hs-pretty
-	url = https://github.com/andrew-wja/llvm-hs-pretty.git
-	branch = llvm-9

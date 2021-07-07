@@ -23,12 +23,10 @@ import Data.Map hiding (map, filter, null, foldr, drop, partition)
 import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
 import Data.List (nub, sort, intercalate, partition)
-import Data.Text.Lazy (unpack)
 import LLVM.AST hiding (args, index, Metadata)
 import LLVM.AST.Global
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
-import qualified LLVM.Pretty as PP
 import qualified LLVM.AST.Constant as Const
 import LLVM.IRBuilder.Constant
 import LLVM.IRBuilder.Instruction
@@ -161,9 +159,9 @@ inspect p
         else if loc
         then gets (Just . (ty,) . (! p) . localStorage)
         else do
-          pp <- liftM (unpack . PP.render) $ PP.ppOperand p
+          pp <- pure $ show p
           fname <- gets (name . fromJust . currentFunction)
-          tell ["inspect: in function " ++ (unpack $ PP.ppll fname) ++ ": no storage allocated for metadata for pointer " ++ pp]
+          tell ["inspect: in function " ++ (show fname) ++ ": no storage allocated for metadata for pointer " ++ pp]
           return Nothing
 
   -- TODO-IMPROVE: Constant expressions of pointer type and global pointers currently just get the don't-care metadata.
@@ -187,13 +185,13 @@ inspect p
 
   | otherwise = do
       fname <- gets (name . fromJust . currentFunction)
-      pp <- liftM (unpack . PP.render) $ PP.ppOperand p
+      pp <- pure $ show p
       tp <- typeOf p
       case tp of
         (PointerType {}) -> do
-          tell ["inspect: in function " ++ (unpack $ PP.ppll fname) ++ ": unsupported pointer " ++ pp]
+          tell ["inspect: in function " ++ (show fname) ++ ": unsupported pointer " ++ pp]
           return Nothing
-        _ -> error $ "inspect: in function " ++ (unpack $ PP.ppll fname) ++ ": argument " ++ pp ++ " is not a pointer"
+        _ -> error $ "inspect: in function " ++ (show fname) ++ ": argument " ++ pp ++ " is not a pointer"
 
 -- | Allocate local variables to hold the metadata for the given pointer.
 allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
@@ -209,8 +207,8 @@ allocateLocalMetadataStorage p = do
     associate p meta
     return meta
   else do
-    fname <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-    pp <- liftM (unpack . PP.render) $ PP.ppOperand p
+    fname <- gets (show . name . fromJust . currentFunction)
+    pp <- pure $ show p
     error $ "allocateLocalMetadataStorage: in function " ++ fname ++ ": storage already allocated for metadata for pointer " ++ pp
 
 -- | Look up the local variables allocated to hold metadata for the given pointer
@@ -220,7 +218,7 @@ getLocalMetadataStorage p = do
   if isJust allocated
   then gets ((! p) . localStorage)
   else do
-    pp <- liftM (unpack . PP.render) $ PP.ppOperand p
+    pp <- pure $ show p
     error $ "getLocalMetadataStorage: no storage allocated for metadata for pointer " ++ pp
 
 -- | Identify the instructions in the given basic block which require local variables to be allocated to hold metadata.
@@ -319,7 +317,7 @@ emitRuntimeMetadataLoad addr
       allocated <- gets (Data.Map.member addr . localStorage)
       if not allocated
       then do
-        pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+        pAddr <- pure $ show addr
         tell ["emitRuntimeMetadataLoad: using don't-care metadata for unsupported pointer " ++ pAddr]
         gets (fromJust . dontCareMetadata)
       else do
@@ -336,11 +334,11 @@ emitRuntimeMetadataLoad addr
       -- TODO-IMPROVE: If asked to load the metadata for a constant pointer expression or global variable, we currently just return the don't-care metadata.
       -- I believe we can just call __softboundcets_metadata_load here but we need to make sure that we are actually setting up the metadata
       -- storage for global variables properly (in 'instrumentGlobalVariable' below) first.
-      pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+      pAddr <- pure $ show addr
       tell ["emitRuntimeMetadataLoad: using don't-care metadata for unsupported pointer " ++ pAddr]
       gets (fromJust . dontCareMetadata)
   | otherwise = do
-      pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
+      pAddr <- pure $ show addr
       error $ "emitRuntimeMetadataLoad: expected pointer but saw non-pointer " ++ pAddr
 
 -- | Create a local key and lock for entities allocated in the current stack frame
@@ -401,9 +399,9 @@ emitMetadataStoreToShadowStack callee p ix = do
   meta <- inspect p
   if isNothing meta
   then do
-    fname <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-    pp <- liftM (unpack . PP.render) $ PP.ppOperand p
-    tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (unpack $ PP.ppll $ fromJust callee)]
+    fname <- gets (show . name . fromJust . currentFunction)
+    pp <- pure $ show p
+    tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (show $ fromJust callee)]
     meta' <- gets (fromJust . dontCareMetadata)
     ix' <- pure $ int32 ix
     baseReg <- load (base meta') 0
@@ -507,7 +505,7 @@ instrument blacklist' opts m = do
           mark gPtr Safe
           -- TODO-IMPROVE: We don't yet handle global variables properly. Pointers to globals currently cause 'inspect' to return 'Nothing'.
       | otherwise = do
-        pg <- liftM (unpack . PP.render) $ PP.ppGlobal g
+        pg <- pure $ show g
         error $ "instrumentGlobalVariable: expected global variable, but got: " ++ pg
 
     instrumentFunction f
@@ -614,9 +612,9 @@ instrument blacklist' opts m = do
               meta <- inspect addr
               if isNothing meta
               then do
-                pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
-                pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-                pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                pAddr <- pure $ show addr
+                pFunc <- gets (show . name . fromJust . currentFunction)
+                pInst <- pure $ show i
                 tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
                 refTy <- liftM pointerReferent $ typeOf addr
                 dcMeta <- gets (fromJust . dontCareMetadata)
@@ -710,18 +708,18 @@ instrument blacklist' opts m = do
         if isNothing refTy
         then do
           -- TODO-IMPROVE: Softboundcets doesn't handle opaque structure types (https://llvm.org/docs/LangRef.html#opaque-structure-types) but we could do so.
-          pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
-          pIxs <- mapM (liftM (unpack . PP.render) . PP.ppOperand) ixs
-          tell ["Unable to compute type of getelementptr result: " ++ (unpack $ PP.ppll ta) ++ " " ++ pAddr ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
+          pAddr <- pure $ show addr
+          pIxs <- pure $ map show ixs
+          tell ["Unable to compute type of getelementptr result: " ++ (show ta) ++ " " ++ pAddr ++ " [" ++ (intercalate ", " pIxs) ++ "]"]
           return ()
         else do
           let gepResultPtr = LocalReference (ptr $ fromJust refTy) v
           meta <- inspect addr
           if isNothing meta
           then do
-            pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
-            pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-            pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+            pAddr <- pure $ show addr
+            pFunc <- gets (show . name . fromJust . currentFunction)
+            pInst <- pure $ show i
             tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
             dcMeta <- gets (fromJust . dontCareMetadata)
             associate gepResultPtr dcMeta -- The pointer created by getelementptr shares metadata storage with the parent pointer
@@ -745,9 +743,9 @@ instrument blacklist' opts m = do
           meta <- inspect addr
           if isNothing meta
           then do
-            pAddr <- liftM (unpack . PP.render) $ PP.ppOperand addr
-            pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-            pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+            pAddr <- pure $ show addr
+            pFunc <- gets (show . name . fromJust . currentFunction)
+            pInst <- pure $ show i
             tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
             dcMeta <- gets (fromJust . dontCareMetadata)
             associate bitcastResultPtr dcMeta -- The pointer created by bitcast shares metadata storage with the parent pointer
@@ -780,9 +778,9 @@ instrument blacklist' opts m = do
             if isJust tMeta
             then return $ snd $ fromJust tMeta
             else do
-              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tval
-              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              pAddr <- pure $ show tval
+              pFunc <- gets (show . name . fromJust . currentFunction)
+              pInst <- pure $ show i
               tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               dcMeta <- gets (fromJust . dontCareMetadata)
               return dcMeta
@@ -792,9 +790,9 @@ instrument blacklist' opts m = do
             if isJust fMeta
             then return $ snd $ fromJust fMeta
             else do
-              pAddr <- liftM (unpack . PP.render) $ PP.ppOperand fval
-              pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-              pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+              pAddr <- pure $ show fval
+              pFunc <- gets (show . name . fromJust . currentFunction)
+              pInst <- pure $ show i
               tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
               dcMeta <- gets (fromJust . dontCareMetadata)
               return dcMeta
@@ -851,9 +849,9 @@ instrument blacklist' opts m = do
         let phiMeta (p, n) = do meta <- inspect p
                                 if isNothing meta
                                 then do
-                                  pAddr <- liftM (unpack . PP.render) $ PP.ppOperand p
-                                  pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-                                  pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                                  pAddr <- pure $ show p
+                                  pFunc <- gets (show . name . fromJust . currentFunction)
+                                  pInst <- pure $ show i
                                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                                   dcMeta <- gets (fromJust . dontCareMetadata)
                                   return (dcMeta, n)
@@ -917,9 +915,9 @@ instrument blacklist' opts m = do
               (ty, tgtMeta') <- case tgtMeta of
                 (Just x) -> return x
                 Nothing -> do
-                  pAddr <- liftM (unpack . PP.render) $ PP.ppOperand tgt
-                  pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-                  pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                  pAddr <- pure $ show tgt
+                  pFunc <- gets (show . name . fromJust . currentFunction)
+                  pInst <- pure $ show i
                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                   pRefTy <- liftM pointerReferent $ typeOf tgt
                   dc <- gets (fromJust . dontCareMetadata)
@@ -946,9 +944,9 @@ instrument blacklist' opts m = do
             (_, srcMeta') <- case srcMeta of
               (Just x) -> return x
               Nothing -> do
-                pAddr <- liftM (unpack . PP.render) $ PP.ppOperand src
-                pFunc <- gets (unpack . PP.ppll . name . fromJust . currentFunction)
-                pInst <- liftM (unpack . PP.render) $ PP.ppNamed PP.ppInstruction i
+                pAddr <- pure $ show src
+                pFunc <- gets (show . name . fromJust . currentFunction)
+                pInst <- pure $ show i
                 tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                 pRefTy <- liftM pointerReferent $ typeOf src
                 dc <- gets (fromJust . dontCareMetadata)

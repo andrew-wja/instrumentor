@@ -21,7 +21,6 @@ library:
     - containers
     - llvm-hs
     - llvm-hs-pure
-    - llvm-hs-pretty
     - mtl
     - text
     - optparse-applicative

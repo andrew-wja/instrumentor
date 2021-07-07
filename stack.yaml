@@ -4,11 +4,9 @@ packages:
 - .
 - ./llvm-hs/llvm-hs
 - ./llvm-hs/llvm-hs-pure
-- ./llvm-hs-pretty
 
 ghc-options:
   llvm-hs: -w -optcxx=-std=c++11 -optcxx=-lstdc++ -optcxx=-fno-rtti -optcxx=-Wno-init-list-lifetime -optcxx=-Wno-stringop-overflow
-  llvm-hs-pretty: -w
   "$locals": -w
   "$targets": -Wall -Wno-partial-type-signatures
   "$everything": -O2
