@@ -33,8 +33,11 @@ int main(int argc, char * argv[]) {
 
   int* field_ptr = &(f->third->third->first);
 
-  // Failure should occur here
+  // Failure should not occur here without bounds narrowing
   printf("%p, %d\n", field_ptr+1, *(field_ptr+1));
+
+  // Failure always occur here
+  printf("%p, %d\n", field_ptr+2, *(field_ptr+2));
 
   free(f);
 
