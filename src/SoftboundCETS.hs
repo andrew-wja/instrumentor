@@ -422,7 +422,9 @@ emitMetadataStoreToShadowStack callee p ix = do
   then do
     fname <- gets (show . name . fromJust . currentFunction)
     pp <- pure $ show p
-    tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (show $ fromJust callee)]
+    if isJust callee
+    then tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (show $ fromJust callee)]
+    else tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " being returned"]
     meta' <- gets (fromJust . dontCareMetadata)
     ix' <- pure $ int32 ix
     baseReg <- load (base meta') 0
