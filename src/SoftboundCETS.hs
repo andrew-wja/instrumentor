@@ -204,10 +204,10 @@ allocateLocalMetadataStorage p = do
   allocated <- gets (Data.Map.member p . localStorage)
   if not allocated
   then do
-    basePtr <- alloca (ptr i8) Nothing 8
-    boundPtr <- alloca (ptr i8) Nothing 8
-    keyPtr <- alloca (i64) Nothing 8
-    lockPtr <- alloca (ptr i8) Nothing 8
+    basePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.base")
+    boundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.bound")
+    keyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.key")
+    lockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.lock")
     let meta = Local basePtr boundPtr keyPtr lockPtr
     associate p meta
     return meta
@@ -367,8 +367,8 @@ emitRuntimeMetadataLoad addr loadedPtr
 -- | Create a local key and lock for entities allocated in the current stack frame
 emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitLocalKeyAndLockCreation = do
-  keyPtr <- alloca i64 Nothing 8
-  lockPtr <- alloca (ptr i8) Nothing 8
+  keyPtr <- (alloca i64 Nothing 8) `named` (fromString "sbcets.stack_frame_key")
+  lockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.stack_frame_lock")
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_create_stack_key" [lockPtr, keyPtr]
   modify $ \s -> s { localStackFrameKeyPtr = Just keyPtr, localStackFrameLockPtr = Just lockPtr }
   return ()
@@ -585,10 +585,10 @@ instrument blacklist' opts m = do
             _ <- emitRuntimeMetadataLoad nullPtr nullPtr
             modify $ \s -> s { dontCareMetadata = Just dcMetadata }
             -- Create the null pointer metadata. The null pointer metadata is not platform dependent.
-            nullMetaBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.base")
-            nullMetaBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.null.bound")
-            nullMetaKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "null.sbcets.key")
-            nullMetaLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.lock")
+            nullMetaBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
+            nullMetaBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
+            nullMetaKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
+            nullMetaLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
             modify $ \s -> s { nullMetadata = Just $ Local nullMetaBasePtr nullMetaBoundPtr nullMetaKeyPtr nullMetaLockPtr }
             -- Initialize the null pointer metadata
             nullMeta <- gets (fromJust . nullMetadata)
@@ -618,7 +618,7 @@ instrument blacklist' opts m = do
       emitBlockStart n
       -- Set up a handle to the global lock pointer
       gl <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
-      glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.glp")
+      glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.global_lock")
       store glp 8 gl
       modify $ \s -> s { globalLockPtr = Just glp }
       -- Create a lock for local allocations

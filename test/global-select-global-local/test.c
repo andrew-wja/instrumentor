@@ -18,20 +18,19 @@ void print(char* str) {
 }
 
 int main(int argc, char * argv[]) {
-  char * ptr1 = global_ptr;
   char * ptr2 = foo();
 
-  char * ptr3;
+  char ** ptr3;
 
-  ptr3 = ((ptr1[3] == 'd') ? ptr2 : ptr1);
+  ptr3 = ((global_ptr[3] == 'd') ? &ptr2 : &global_ptr);
 
-  print(ptr1);
+  print(global_ptr);
   print(ptr2);
-  print(ptr3);
+  print(*ptr3);
 
   // this should trigger a failure
-  free(ptr3);
+  free(*ptr3);
 
-  print(ptr3);
+  print(*ptr3);
   return 0;
 }
