@@ -348,7 +348,11 @@ emitRuntimeMetadataLoad addr loadedPtr
             base' <- load (base meta') 0
             bound' <- load (bound meta') 0
             key' <- load (key meta') 0
-            lock' <- case meta' of { (Local {}) -> load (lock meta') 0; (Global {}) -> gets (fromJust . globalLockPtr) }
+            lock' <- case meta' of
+              (Local {}) -> load (lock meta') 0
+              (Global {}) -> do
+                glp <- gets (fromJust . globalLockPtr)
+                load glp 0
             emitMetadataStoreToLocalVariables loadedPtr (base', bound', key', lock')
 
           (MetadataOperand {}) -> do
@@ -451,8 +455,9 @@ emitMetadataStoreToShadowStack callee p ix = do
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-        lock' <- gets (fromJust . globalLockPtr)
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lock', ix']
+        glp <- gets (fromJust . globalLockPtr)
+        lockReg <- load glp 0
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
         return ()
 
 -- | Decide whether the given function symbol is a function that should not be instrumented.
@@ -580,10 +585,10 @@ instrument blacklist' opts m = do
             _ <- emitRuntimeMetadataLoad nullPtr nullPtr
             modify $ \s -> s { dontCareMetadata = Just dcMetadata }
             -- Create the null pointer metadata. The null pointer metadata is not platform dependent.
-            nullMetaBasePtr <- alloca (ptr i8) Nothing 8
-            nullMetaBoundPtr <- alloca (ptr i8) Nothing 8
-            nullMetaKeyPtr <- alloca (i64) Nothing 8
-            nullMetaLockPtr <- alloca (ptr i8) Nothing 8
+            nullMetaBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.base")
+            nullMetaBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.null.bound")
+            nullMetaKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "null.sbcets.key")
+            nullMetaLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "null.sbcets.lock")
             modify $ \s -> s { nullMetadata = Just $ Local nullMetaBasePtr nullMetaBoundPtr nullMetaKeyPtr nullMetaLockPtr }
             -- Initialize the null pointer metadata
             nullMeta <- gets (fromJust . nullMetadata)
@@ -611,8 +616,10 @@ instrument blacklist' opts m = do
 
     instrumentFirstBlock (BasicBlock n i t) = do
       emitBlockStart n
-      -- Set up a handle to the global lock
-      glp <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
+      -- Set up a handle to the global lock pointer
+      gl <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
+      glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.glp")
+      store glp 8 gl
       modify $ \s -> s { globalLockPtr = Just glp }
       -- Create a lock for local allocations
       emitLocalKeyAndLockCreation
@@ -703,7 +710,9 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [basePtr, boundPtr, addr', tySize]
                     -- Check the load is temporally in bounds
                     keyPtr <- load (key meta') 0
-                    lockPtr <- gets (fromJust . globalLockPtr)
+                    lockPtr <- do
+                      glp <- gets (fromJust . globalLockPtr)
+                      load glp 0
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockPtr, keyPtr]
                     return ()
             Safe -> return ()
@@ -965,7 +974,9 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [basePtr, boundPtr, tgt', tySize]
                     -- Check the store is temporally in bounds
                     keyPtr <- load (key meta') 0
-                    lockPtr <- gets (fromJust . globalLockPtr)
+                    lockPtr <- do
+                      glp <- gets (fromJust . globalLockPtr)
+                      load glp 0
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockPtr, keyPtr]
                     return ()
             Safe -> return ()
@@ -1005,11 +1016,13 @@ instrument blacklist' opts m = do
                 (_, meta'@(Global {})) -> do -- Metadata in global variables
                   tgt' <- bitcast tgt (ptr i8)
                   -- Write the metadata for the stored pointer to the runtime
-                  basePtr <- load (base meta') 0
-                  boundPtr <- load (bound meta') 0
-                  keyPtr <- load (key meta') 0
-                  lockPtr <- gets (fromJust . globalLockPtr)
-                  _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', basePtr, boundPtr, keyPtr, lockPtr]
+                  baseReg <- load (base meta') 0
+                  boundReg <- load (bound meta') 0
+                  keyReg <- load (key meta') 0
+                  lockReg <- do
+                    glp <- gets (fromJust . globalLockPtr)
+                    load glp 0
+                  _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
                   return ()
 
       | otherwise = Helpers.emitNamedInst i
