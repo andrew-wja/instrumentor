@@ -264,27 +264,16 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
                           zip argTys lrArgs
             return (ptrArgs ++ ptrRet)
           else return []
-      -- Case 3a: The select instruction can create a new pointer by selecting between local and global variables. The only way to handle this in the general case is to allocate new metadata.
-      | (v := o) <- inst, (Select _ tval _ _) <- o = do
-          selTy <- typeOf tval
-          if (Helpers.isPointerType selTy && (not $ Helpers.isFunctionType $ pointerReferent selTy)) -- TODO-IMPROVE: We don't currently instrument function pointers
-          then return [LocalReference selTy v]
-          else return []
-      -- Case 3b: The phi instruction can create a new pointer by selecting between local and global variables. The only way to handle this in the general case is to allocate new metadata.
-      | (v := o) <- inst, (Phi pty@(PointerType ty _) _ _) <- o = do
-          if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
-          then return [LocalReference pty v]
-          else return []
-      -- Case 4: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
+      -- Case 3: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
       | (_ := o) <- inst, (Phi (PointerType ty _) incoming _) <- o = do
           if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
           then return (map fst $ filter (Helpers.isLocalReference . fst) incoming)
           else return []
-      -- Case 5: If we allocate anything on the stack, we get a pointer to it, which needs metadata.
+      -- Case 4: If we allocate anything on the stack, we get a pointer to it, which needs metadata.
       | (v := o) <- inst, (Alloca ty _ _ _) <- o = do
           enable <- gets (CLI.instrumentStack . options)
           if (enable && (not $ Helpers.isFunctionType ty)) then return [LocalReference (ptr ty) v] else return [] -- TODO-IMPROVE: We don't currently instrument function pointers
-      -- Case 6: Case 2 for void functions (no possibility of returning a pointer here).
+      -- Case 5: Case 2 for void functions (no possibility of returning a pointer here).
       | (Do o) <- inst, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType _ _ False) _) fname@(Name {})))) opds _ _) <- o = do
           enable <- gets (CLI.instrumentCall . options)
           ignore <- isIgnoredFunction fname
@@ -301,7 +290,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
       | otherwise = return []
 
     termAllocations term
-      -- Case 7: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so (for LocalReference pointers) it must be available in local variables.
+      -- Case 6: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so (for LocalReference pointers) it must be available in local variables.
       | (Do (Ret (Just x) _)) <- term = do
           tx <- typeOf x
           if (Helpers.isLocalReference x) &&
@@ -849,19 +838,11 @@ instrument blacklist' opts m = do
               dcMeta <- gets (fromJust . dontCareMetadata)
               return dcMeta
 
-          tBase <- load (base tMeta') 0
-          fBase <- load (base fMeta') 0
-          base' <- select cond tBase fBase
-          tBound <- load (bound tMeta') 0
-          fBound <- load (bound fMeta') 0
-          bound' <- select cond tBound fBound
-          tKey <- load (key tMeta') 0
-          fKey <- load (key fMeta') 0
-          key' <- select cond tKey fKey
-          tLock <- case tMeta' of { (Local {}) -> load (lock tMeta') 0; (Global {}) -> gets (fromJust . globalLockPtr) }
-          fLock <- case fMeta' of { (Local {}) -> load (lock fMeta') 0; (Global {}) -> gets (fromJust . globalLockPtr) }
-          lock' <- select cond tLock fLock
-          _ <- emitMetadataStoreToLocalVariables resultPtr (base', bound', key', lock')
+          base' <- select cond (base tMeta') (base fMeta')
+          bound' <- select cond (bound tMeta') (bound fMeta')
+          key' <- select cond (key tMeta') (key fMeta')
+          lock' <- select cond (lock tMeta') (lock fMeta')
+          associate resultPtr $ Local base' bound' key' lock'
           return ()
 
       | (Phi (PointerType ty _) incoming _) <- o = do
@@ -875,27 +856,23 @@ instrument blacklist' opts m = do
                                   pInst <- pure $ show i
                                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
                                   dcMeta <- gets (fromJust . dontCareMetadata)
-                                  base' <- load (base dcMeta) 0
-                                  bound' <- load (bound dcMeta) 0
-                                  key' <- load (key dcMeta) 0
-                                  lock' <- load (lock dcMeta) 0
-                                  return ((base', bound', key', lock'), n)
+                                  return (dcMeta, n)
                                 else do
-                                 let meta' = snd $ fromJust meta
-                                 base' <- load (base meta') 0
-                                 bound' <- load (bound meta') 0
-                                 key' <- load (key meta') 0
-                                 lock' <- case meta' of { (Local {}) -> load (lock meta') 0; (Global {}) -> gets (fromJust . globalLockPtr) }
-                                 return ((base', bound', key', lock'), n)
+                                  let meta' = snd $ fromJust meta
+                                  lock' <- case meta' of
+                                    (Local {}) -> pure $ lock meta'
+                                    (Global {}) -> gets (fromJust . globalLockPtr)
+                                  let meta'' = Local (base meta') (bound meta') (key meta') lock'
+                                  return (meta'', n)
 
         when (not $ Helpers.isFunctionType ty) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
           incomingMeta <- forM incoming phiMeta
-          base'  <- phi $ map (\((x,_,_,_), n) -> (x, n)) incomingMeta
-          bound' <- phi $ map (\((_,x,_,_), n) -> (x, n)) incomingMeta
-          key'   <- phi $ map (\((_,_,x,_), n) -> (x, n)) incomingMeta
-          lock'  <- phi $ map (\((_,_,_,x), n) -> (x, n)) incomingMeta
+          base'  <- phi $ map (\(x, n) -> (base x, n)) incomingMeta
+          bound' <- phi $ map (\(x, n) -> (bound x, n)) incomingMeta
+          key'   <- phi $ map (\(x, n) -> (key x, n)) incomingMeta
+          lock'  <- phi $ map (\(x, n) -> (lock x, n)) incomingMeta
           let resultPtr = LocalReference (ptr ty) v
-          _ <- emitMetadataStoreToLocalVariables resultPtr (base', bound', key', lock')
+          associate resultPtr $ Local base' bound' key' lock'
           return ()
 
       | otherwise = Helpers.emitNamedInst i
