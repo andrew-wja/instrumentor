@@ -25,6 +25,7 @@ import Data.String (IsString(..))
 import Data.List (nub, sort, intercalate, partition)
 import LLVM.AST hiding (args, index, type', Metadata)
 import LLVM.AST.Global
+import LLVM.AST.Linkage
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf)
 import qualified LLVM.AST.Constant as Const
@@ -52,7 +53,7 @@ data Metadata = Local    { base :: Operand
               | Global   { base :: Operand
                          , bound :: Operand
                          , key :: Operand
-                         } -- Constant metadata uses the 'globalLockPtr'
+                         } -- Globals use the runtime-initialized global lock
 
 type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
 
@@ -541,9 +542,9 @@ instrument blacklist' opts m = do
                           then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 1]) (ptr i8)
                           else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 1]) (ptr i8)
           let keyConst = Const.Int 64 1
-          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBaseName, type' = ptr i8, isConstant = True, initializer = Just baseConst }
-          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBoundName, type' = ptr i8, isConstant = True, initializer = Just boundConst }
-          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gKeyName, type' = i64, isConstant = True, initializer = Just keyConst }
+          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBaseName, type' = ptr i8, isConstant = True, linkage = Private, initializer = Just baseConst }
+          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBoundName, type' = ptr i8, isConstant = True, linkage = Private, initializer = Just boundConst }
+          emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gKeyName, type' = i64, isConstant = True, linkage = Private, initializer = Just keyConst }
           let gMeta = Global (ConstantOperand $ Const.GlobalReference (ptr $ ptr i8) gBaseName)
                              (ConstantOperand $ Const.GlobalReference (ptr $ ptr i8) gBoundName)
                              (ConstantOperand $ Const.GlobalReference (ptr i64) gKeyName)
