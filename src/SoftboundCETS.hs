@@ -336,7 +336,7 @@ emitRuntimeMetadataLoad addr loadedPtr
               return ()
             return meta
 
-          (ConstantOperand {}) -> do -- Loading a global variable pointer
+          (ConstantOperand {}) -> do -- Loading a global variable pointer or explicit constant address
             meta <- inspect addr
             meta' <- if isJust meta
                      then return $ snd $ fromJust meta
@@ -838,10 +838,18 @@ instrument blacklist' opts m = do
               dcMeta <- gets (fromJust . dontCareMetadata)
               return dcMeta
 
+          tLock' <- case tMeta' of
+            (Local {}) -> pure $ lock tMeta'
+            (Global {}) -> gets (fromJust . globalLockPtr)
+
+          fLock' <- case fMeta' of
+            (Local {}) -> pure $ lock fMeta'
+            (Global {}) -> gets (fromJust . globalLockPtr)
+
           base' <- select cond (base tMeta') (base fMeta')
           bound' <- select cond (bound tMeta') (bound fMeta')
           key' <- select cond (key tMeta') (key fMeta')
-          lock' <- select cond (lock tMeta') (lock fMeta')
+          lock' <- select cond (tLock') (fLock')
           associate resultPtr $ Local base' bound' key' lock'
           return ()
 
