@@ -675,7 +675,10 @@ instrument blacklist' opts m = do
                         then do
                           tc <- typeOf $ fromJust count
                           case tc of
-                            (Left s) -> error $ "instrumentInst: could not compute type of alloca count parameter (" ++ s ++ ")"
+                            (Left s) -> do
+                              pFunc <- gets (show . name . fromJust . currentFunction)
+                              pInst <- pure $ show i
+                              error $ "instrumentInst: in function "++ pFunc ++ ": could not compute type of alloca count parameter in " ++ pInst ++ " (" ++ s ++ ")"
                             (Right tc') -> do
                               if not (tc' == i64)
                               then sext (fromJust count) i64
@@ -708,7 +711,8 @@ instrument blacklist' opts m = do
                 tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
                 ta <- typeOf addr
                 case ta of
-                  (Left s) -> error $ "instrumentInst: could not compute type of argument to load instruction (" ++ s ++ ")"
+                  (Left s) -> do
+                    error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of argument to load instruction in " ++ pInst ++ " (" ++ s ++ ")"
                   (Right ta') -> do
                     let refTy = pointerReferent ta'
                     dcMeta <- gets (fromJust . dontCareMetadata)
@@ -758,7 +762,10 @@ instrument blacklist' opts m = do
         when enable $ do -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the loaded address.
           ta <- typeOf addr
           case ta of
-            (Left s) -> error $ "instrumentInst: could not compute type of argument to load instruction (" ++ s ++ ")"
+            (Left s) -> do
+              pFunc <- gets (show . name . fromJust . currentFunction)
+              pInst <- pure $ show i
+              error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of loaded value in " ++ pInst ++ " (" ++ s ++ ")"
             (Right ta') -> do
               when ((Helpers.isPointerType $ pointerReferent ta') &&
                     (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta')) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
@@ -804,14 +811,19 @@ instrument blacklist' opts m = do
                 emitShadowStackDeallocation
               else do
                 let s = head $ lefts opdTys
-                error $ "instrumentInst: could not compute type of function argument (" ++ s ++ ")"
+                pFunc <- gets (show . name . fromJust . currentFunction)
+                pInst <- pure $ show i
+                error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of function argument in " ++ pInst ++ " (" ++ s ++ ")"
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
 
       | (GetElementPtr _ addr ixs _) <- o = do
         ta <- typeOf addr
         case ta of
-          (Left s) -> error $ "instrumentInst: could not compute type of argument to getelementptr instruction (" ++ s ++ ")"
+          (Left s) -> do
+            pFunc <- gets (show . name . fromJust . currentFunction)
+            pInst <- pure $ show i
+            error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of argument to getelementptr instruction in " ++ pInst ++ " (" ++ s ++ ")"
           (Right ta') -> do
             refTy <- indexTypeByOperands ta' ixs
             case refTy of
@@ -864,7 +876,10 @@ instrument blacklist' opts m = do
         Helpers.emitNamedInst i
         selTy <- typeOf tval
         case selTy of
-          (Left s) -> error $ "instrumentInst: could not compute type of select instruction argument (" ++ s ++ ")"
+          (Left s) -> do
+            pFunc <- gets (show . name . fromJust . currentFunction)
+            pInst <- pure $ show i
+            error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of select instruction argument in " ++ pInst ++ " (" ++ s ++ ")"
           (Right selTy') -> do
             when (Helpers.isPointerType selTy' && (not $ Helpers.isFunctionType $ pointerReferent selTy')) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
               let resultPtr = LocalReference selTy' v
@@ -977,7 +992,9 @@ instrument blacklist' opts m = do
                 emitShadowStackDeallocation
               else do
                 let s = head $ lefts opdTys
-                error $ "instrumentInst: could not compute type of function argument (" ++ s ++ ")"
+                pFunc <- gets (show . name . fromJust . currentFunction)
+                pInst <- pure $ show i
+                error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of function argument in " ++ pInst ++ " (" ++ s ++ ")"
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
               Helpers.emitNamedInst i
 
@@ -1046,7 +1063,10 @@ instrument blacklist' opts m = do
         when enable $ do
           ty <- typeOf src
           case ty of
-            (Left s) -> error $ "instrumentInst: could not compute type of stored pointer (" ++ s ++ ")"
+            (Left s) -> do
+              pFunc <- gets (show . name . fromJust . currentFunction)
+              pInst <- pure $ show i
+              error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of stored value in " ++ pInst ++ " (" ++ s ++ ")"
             (Right ty') -> do
               when (Helpers.isPointerType ty' && (not $ Helpers.isFunctionType $ pointerReferent ty')) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
                 meta <- inspect src
@@ -1094,7 +1114,10 @@ instrument blacklist' opts m = do
       | (Do (Ret (Just op) _)) <- i = do
           ty <- typeOf op
           case ty of
-            (Left s) -> error $ "instrumentInst: could not compute type of argument to return instruction (" ++ s ++ ")"
+            (Left s) -> do
+              pFunc <- gets (show . name . fromJust . currentFunction)
+              pInst <- pure $ show i
+              error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of argument to return instruction in " ++ pInst ++ " (" ++ s ++ ")"
             (Right ty') -> do
               when (Helpers.isPointerType ty' && (not $ Helpers.isFunctionType $ pointerReferent ty')) $ do
                 -- If we are returning a pointer, put the metadata on the shadow stack
