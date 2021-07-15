@@ -9,15 +9,12 @@ Stability   : experimental
 
 module LLVMHelpers where
 
-import Data.Map (lookup)
 import Data.String (IsString(..))
 import Data.List (isInfixOf)
-import Control.Monad.State
 import LLVM.AST
 import LLVM.AST.Constant
 import LLVM.AST.Global
 import LLVM.IRBuilder.Monad
-import LLVM.IRBuilder.Module
 import LLVM.IRBuilder.Internal.SnocList
 
 -- | Helper to rewrite the called function symbol (for example, to a wrapper function symbol) at a callsite.
@@ -85,19 +82,3 @@ isTypeDef _ = False
 getFuncName :: Definition -> Name
 getFuncName (GlobalDefinition f@(Function {})) = name f
 getFuncName _ = undefined
-
--- | Index into a type with a list of consecutive 'Operand' indices.
-typeIndex :: MonadModuleBuilder m => Type -> [Operand] -> m (Maybe Type)
-typeIndex ty [] = pure $ Just ty
-typeIndex (PointerType ty _) (_:is') = typeIndex ty is'
-typeIndex (StructureType _ elTys) (ConstantOperand (Int 32 val):is') =
-  typeIndex (head $ drop (fromIntegral val) elTys) is'
-typeIndex (StructureType _ _) (i:_) = error $ "Field indices for structure types must be i32 constants, got: " ++ (show i)
-typeIndex (VectorType _ elTy) (_:is') = typeIndex elTy is'
-typeIndex (ArrayType _ elTy) (_:is') = typeIndex elTy is'
-typeIndex (NamedTypeReference nm) is' = do
-  mayTy <- liftModuleState (gets (Data.Map.lookup nm . builderTypeDefs))
-  case mayTy of
-    Nothing -> pure Nothing
-    Just ty -> typeIndex ty is'
-typeIndex t (_:_) = error $ "Can't index into type: " ++ (show t)
