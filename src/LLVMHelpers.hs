@@ -82,3 +82,10 @@ isTypeDef _ = False
 getFuncName :: Definition -> Name
 getFuncName (GlobalDefinition f@(Function {})) = name f
 getFuncName _ = undefined
+
+-- | Helper function
+walk :: Operand -> Operand
+walk pointer
+  | (ConstantOperand (LLVM.AST.Constant.GetElementPtr _ x _)) <- pointer = walk (ConstantOperand x)
+  | (ConstantOperand (LLVM.AST.Constant.BitCast x _)) <- pointer = walk (ConstantOperand x)
+  | otherwise = pointer

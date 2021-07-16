@@ -24,9 +24,8 @@ import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
 import Data.List (nub, sort, intercalate, partition)
 import Data.Either
-import LLVM.AST hiding (args, index, type', Metadata)
+import LLVM.AST hiding (args, index, type')
 import LLVM.AST.Global
-import LLVM.AST.Linkage
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf, indexTypeByOperands)
 import qualified LLVM.AST.Constant as Const
@@ -41,20 +40,16 @@ import qualified LLVMHelpers as Helpers
 -- | SoftboundCETS has two classes of pointer: SAFE and UNSAFE.
 data PointerClass = Safe | Unsafe
 
--- | Metadata is a 4-tuple: the base address, bound address, key value, and lock
---   address associated with some user pointer. Metadata is held in different
---   ways: local variable metadata is held in local variables, while metadata
---   for global variables is held in global variables.
+data LocalMetadata = Local    { base :: Operand
+                              , bound :: Operand
+                              , key :: Operand
+                              , lock :: Operand
+                              }
 
-data Metadata = Local    { base :: Operand
-                         , bound :: Operand
-                         , key :: Operand
-                         , lock :: Operand
-                         }
-              | Global   { base :: Operand
-                         , bound :: Operand
-                         , key :: Operand
-                         } -- Globals use the runtime-initialized global lock
+data GlobalMetadata = Global  { gbase :: Const.Constant
+                              , gbound :: Const.Constant
+                              , gkey :: Const.Constant
+                              } -- Globals use the runtime-initialized global lock
 
 type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
 
@@ -74,19 +69,21 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ The command line options are stored for inspection.
                                , currentFunction :: Maybe Global
                                -- ^ The current function we are processing (needed for decent error reporting).
+                               , currentFunctionGlobals :: Data.Set.Set Operand
+                               -- ^ The set of global references in the current function. These need local metadata when they are used, which is populated from their constant metadata.
                                , classifications :: Map Operand PointerClass
                                -- ^ The map of pointers to their class.
                                --   'classifications' needs to be saved and restored around function entry and exit so we don't mistakenly treat
                                --   pointers with the same names in different functions as belonging to the same class. Outside a function, 'classifications' contains global variables.
                                , blacklist :: Data.Set.Set Name
                                -- ^ The set of blacklisted function symbols (these will not be instrumented).
-                               , dontCareMetadata :: Maybe Metadata
-                               -- ^ Metadata that can never cause any runtime checks to fail.
-                               , nullMetadata :: Maybe Metadata
-                               -- ^ Metadata for null pointers.
-                               , localStorage :: Map Operand Metadata
+                               , dontCareMetadata :: Maybe LocalMetadata
+                               -- ^ LocalMetadata that can never cause any runtime checks to fail.
+                               , nullMetadata :: Maybe LocalMetadata
+                               -- ^ LocalMetadata for null pointers.
+                               , localMetadata :: Map Operand LocalMetadata
                                -- ^ A 'Map' from pointer 'Operand's in the current function to their metadata.
-                               , globalStorage :: Map Operand Metadata
+                               , globalMetadata :: Map Operand GlobalMetadata
                                -- ^ A 'Map' from pointer 'Operand's in the global scope to their metadata.
                                }
 
@@ -95,7 +92,7 @@ emptySBCETSState :: SBCETSState
 emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Set.empty
                                Data.Map.empty Data.Map.empty
-                               CLI.defaultOptions Nothing
+                               CLI.defaultOptions Nothing Data.Set.empty
                                Data.Map.empty Data.Set.empty
                                Nothing Nothing Data.Map.empty Data.Map.empty
 
@@ -141,35 +138,35 @@ query :: MonadState SBCETSState m => PointerClass-> Operand -> m PointerClass
 query d p = gets (maybe d id . (Data.Map.lookup p . classifications))
 
 -- | Associate local metadata storage with the given pointer.
-associate :: MonadState SBCETSState m => Operand -> Metadata -> m ()
-associate p m = modify $ \s -> s { localStorage = Data.Map.insert p m $ localStorage s }
+associate :: MonadState SBCETSState m => Operand -> LocalMetadata -> m ()
+associate p m = modify $ \s -> s { localMetadata = Data.Map.insert p m $ localMetadata s }
 
 -- | 'inspect' traverses pointer-type expressions and returns the metadata.
-inspect :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, Metadata))
+inspect :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, LocalMetadata))
 inspect p
   | (LocalReference (PointerType ty _) _) <- p = do
       if Helpers.isFunctionType ty
       then return Nothing -- TODO-IMPROVE: Function pointers currently get don't-care metadata but they are supposed to be checked for spatial safety at callsites.
       else do
-        present <- gets (Data.Map.member p . localStorage)
+        present <- gets (Data.Map.member p . localMetadata)
         if present
-        then gets (Just . (ty,) . (! p) . localStorage)
+        then gets (Just . (ty,) . (! p) . localMetadata)
         else do
           pp <- pure $ show p
           fname <- gets (name . fromJust . currentFunction)
-          tell ["inspect: in function " ++ (show fname) ++ ": no storage allocated for metadata for pointer " ++ pp]
+          tell ["inspect: in function " ++ (show fname) ++ ": no local storage allocated for metadata for pointer " ++ pp]
           return Nothing
 
   | (ConstantOperand (Const.Null (PointerType ty _))) <- p = gets (Just . (ty,) . fromJust . nullMetadata)
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = gets (Just . (ty,) . fromJust . nullMetadata)
   | (ConstantOperand (Const.GlobalReference (PointerType ty _) _)) <- p = do
-      present <- gets (Data.Map.member p . globalStorage)
+      present <- gets (Data.Map.member p . localMetadata)
       if present
-      then gets (Just . (ty,) . (! p) . globalStorage)
+      then gets (Just . (ty,) . (! p) . localMetadata)
       else do
         pp <- pure $ show p
         fname <- gets (name . fromJust . currentFunction)
-        tell ["inspect: in function " ++ (show fname) ++ ": no storage allocated for metadata for global variable " ++ pp]
+        tell ["inspect: in function " ++ (show fname) ++ ": no local storage allocated for metadata for global variable " ++ pp]
         return Nothing
 
   | (ConstantOperand (Const.GetElementPtr _ addr _)) <- p = inspect (ConstantOperand addr)
@@ -202,9 +199,9 @@ inspect p
         (Right _) -> error $ "inspect: in function " ++ (show fname) ++ ": argument " ++ pp ++ " is not a pointer"
 
 -- | Allocate local variables to hold the metadata for the given pointer.
-allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
+allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
 allocateLocalMetadataStorage p = do
-  allocated <- gets (Data.Map.member p . localStorage)
+  allocated <- gets (Data.Map.member p . localMetadata)
   if not allocated
   then do
     basePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.base")
@@ -212,7 +209,8 @@ allocateLocalMetadataStorage p = do
     keyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.key")
     lockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.lock")
     let meta = Local basePtr boundPtr keyPtr lockPtr
-    associate p meta
+    let p' = Helpers.walk p
+    associate p' meta
     return meta
   else do
     fname <- gets (show . name . fromJust . currentFunction)
@@ -220,11 +218,11 @@ allocateLocalMetadataStorage p = do
     error $ "allocateLocalMetadataStorage: in function " ++ fname ++ ": storage already allocated for metadata for pointer " ++ pp
 
 -- | Look up the local variables allocated to hold metadata for the given pointer
-getLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Metadata
+getLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
 getLocalMetadataStorage p = do
-  allocated <- gets ((Data.Map.lookup p) . localStorage)
+  allocated <- gets ((Data.Map.lookup p) . localMetadata)
   if isJust allocated
-  then gets ((! p) . localStorage)
+  then gets ((! p) . localMetadata)
   else do
     pp <- pure $ show p
     error $ "getLocalMetadataStorage: no storage allocated for metadata for pointer " ++ pp
@@ -240,7 +238,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
   return (nub $ sort (isites ++ tsites))
   where
     instAllocations inst
-      -- Case 1: If a pointer is loaded from memory, local metadata is allocated for the pointer's metadata.
+      -- Case 1: If a pointer is loaded from memory, local metadata is allocated for the pointer's metadata. Local metadata also needs allocating for the address if it is a global variable.
       | (v := o) <- inst, (Load _ addr _ _ _) <- o = do
           enable <- gets (CLI.instrumentLoad . options)
           if enable
@@ -251,17 +249,22 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               (Right ta') -> do
                 if (Helpers.isPointerType $ pointerReferent ta') &&
                   (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta') -- TODO-IMPROVE: We don't currently instrument function pointers
-                then return [LocalReference (pointerReferent ta') v]
+                then do
+                  if Helpers.isConstantOperand addr
+                  then do
+                    modify $ \s -> s { currentFunctionGlobals = Data.Set.insert addr $ currentFunctionGlobals s }
+                    return [addr, LocalReference (pointerReferent ta') v]
+                  else return [LocalReference (pointerReferent ta') v]
                 else return []
           else return []
-      -- Case 2: If a function is called and LocalReference pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
+      -- Case 2: If a function is called and pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
       -- Additionally, if a pointer is returned, local variables must be allocated to hold the metadata for that pointer.
       | (v := o) <- inst, (Call _ _ _ (Right (ConstantOperand (Const.GlobalReference (PointerType (FunctionType rt _ False) _) fname@(Name {})))) opds _ _) <- o = do
           enable <- gets (CLI.instrumentCall . options)
           ignore <- isIgnoredFunction fname
           if (enable && not ignore)
           then do
-            let lrArgs = filter Helpers.isLocalReference $ map fst opds
+            let lrArgs = map fst opds
             let ptrRet = if (Helpers.isPointerType rt) then [LocalReference rt v] else []
             argTys <- mapM typeOf lrArgs
             if all isRight argTys
@@ -270,16 +273,36 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
                             filter (not . Helpers.isFunctionType . pointerReferent . fst) $ -- TODO-IMPROVE: We don't currently instrument function pointers
                             filter (Helpers.isPointerType . fst) $
                             zip (rights argTys) lrArgs
+              let globals = filter Helpers.isConstantOperand ptrArgs
+              modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList globals) $ currentFunctionGlobals s }
               return (ptrArgs ++ ptrRet)
             else do
               let s = head $ lefts argTys
               error $ "identifyLocalMetadataAllocations: failed to compute type of function parameter (" ++ s ++ ")"
           else return []
-      -- Case 3: Local metadata must be available for any LocalReference incoming values to a phi instruction of pointer type.
+      -- Case 3a: Local metadata must be available for all incoming values to a phi instruction of pointer type.
       | (_ := o) <- inst, (Phi (PointerType ty _) incoming _) <- o = do
           if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
-          then return (map fst $ filter (Helpers.isLocalReference . fst) incoming)
+          then do
+            let incomingV = map fst incoming
+            let incomingG = filter Helpers.isConstantOperand incomingV
+            modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
+            return incomingV
           else return []
+      -- Case 3b: Local metadata must be available for all incoming values to a select instruction of pointer type.
+      | (_ := o) <- inst, (Select _ tv fv _) <- o = do
+          selTy <- typeOf tv
+          case selTy of
+            (Left s) -> do
+              error $ "identifyLocalMetadataAllocations: failed to compute type of select instruction argument (" ++ s ++ ")"
+            (Right selTy') -> do
+              if (Helpers.isPointerType selTy' && (not $ Helpers.isFunctionType $ pointerReferent selTy')) -- TODO-IMPROVE: We don't currently instrument function pointers
+              then do
+                let incomingV = [tv, fv]
+                let incomingG = filter Helpers.isConstantOperand incomingV
+                modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
+                return incomingV
+              else return []
       -- Case 4: If we allocate anything on the stack, we get a pointer to it, which needs metadata.
       | (v := o) <- inst, (Alloca ty _ _ _) <- o = do
           enable <- gets (CLI.instrumentStack . options)
@@ -290,14 +313,16 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           ignore <- isIgnoredFunction fname
           if (enable && not ignore)
           then do
-            let lrArgs = filter Helpers.isLocalReference $ map fst opds
+            let lrArgs = map fst opds
             argTys <- mapM typeOf lrArgs
             if all isRight argTys
             then do
               let ptrArgs = map snd $
-                          filter (not . Helpers.isFunctionType . pointerReferent . fst) $ -- TODO-IMPROVE: We don't currently instrument function pointers
-                          filter (Helpers.isPointerType . fst) $
-                          zip (rights argTys) lrArgs
+                            filter (not . Helpers.isFunctionType . pointerReferent . fst) $ -- TODO-IMPROVE: We don't currently instrument function pointers
+                            filter (Helpers.isPointerType . fst) $
+                            zip (rights argTys) lrArgs
+              let globals = filter Helpers.isConstantOperand ptrArgs
+              modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList globals) $ currentFunctionGlobals s }
               return ptrArgs
             else do
               let s = head $ lefts argTys
@@ -306,16 +331,18 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
       | otherwise = return []
 
     termAllocations term
-      -- Case 6: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so (for LocalReference pointers) it must be available in local variables.
+      -- Case 6: If we return a pointer, we need to push the pointer's metadata to the shadow stack, so it must be available in local variables.
       | (Do (Ret (Just x) _)) <- term = do
           tx <- typeOf x
           case tx of
             (Left s) -> error $ "identifyLocalMetadataAllocations: failed to compute type of return argument (" ++ s ++ ")"
             (Right tx') -> do
-              if (Helpers.isLocalReference x) &&
-                (Helpers.isPointerType tx') &&
-                (not $ Helpers.isFunctionType $ pointerReferent tx') -- TODO-IMPROVE: We don't currently instrument function pointers
-              then return [x]
+              if (Helpers.isPointerType tx') &&
+                 (not $ Helpers.isFunctionType $ pointerReferent tx') -- TODO-IMPROVE: We don't currently instrument function pointers
+              then do
+                when (Helpers.isConstantOperand x) $ do
+                  modify $ \s -> s { currentFunctionGlobals = Data.Set.insert x $ currentFunctionGlobals s }
+                return [x]
               else return []
       | otherwise = return []
 
@@ -334,10 +361,10 @@ emitRuntimeAPIFunctionCall n args = do
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
 
 -- | Load the metadata for the pointer stored at the given memory address (first argument) from the runtime. Associate the loaded metadata with the given pointer (second argument)
-emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m Metadata
+emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m LocalMetadata
 emitRuntimeMetadataLoad addr loadedPtr
   | (LocalReference (PointerType _ _) _) <- loadedPtr = do
-      allocated <- gets (Data.Map.member loadedPtr . localStorage)
+      allocated <- gets (Data.Map.member loadedPtr . localMetadata)
       if not allocated
       then do
         pLoadedPtr <- pure $ show loadedPtr
@@ -367,11 +394,7 @@ emitRuntimeMetadataLoad addr loadedPtr
             base' <- load (base meta') 0
             bound' <- load (bound meta') 0
             key' <- load (key meta') 0
-            lock' <- case meta' of
-              (Local {}) -> load (lock meta') 0
-              (Global {}) -> do
-                glp <- gets (fromJust . globalLockPtr)
-                load glp 0
+            lock' <- load (lock meta') 0
             emitMetadataStoreToLocalVariables loadedPtr (base', bound', key', lock')
 
           (MetadataOperand {}) -> do
@@ -382,6 +405,20 @@ emitRuntimeMetadataLoad addr loadedPtr
   | otherwise = do
       pLoadedPtr <- pure $ show loadedPtr
       error $ "emitRuntimeMetadataLoad: expected local variable pointer but saw " ++ pLoadedPtr
+
+-- | Create local metadata variables in a function to hold the metadata for the given global variable
+populateLocalMetadataForGlobal :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m ()
+populateLocalMetadataForGlobal g = do
+  let g' = Helpers.walk g
+  localMeta <- getLocalMetadataStorage g'
+  globalMeta <- gets ((! g') . globalMetadata)
+  glp <- gets (fromJust . globalLockPtr)
+  gl <- load glp 0
+  store (base localMeta) 8 (ConstantOperand $ gbase globalMeta)
+  store (bound localMeta) 8 (ConstantOperand $ gbound globalMeta)
+  store (key localMeta) 8 (ConstantOperand $ gkey globalMeta)
+  store (lock localMeta) 8 gl
+  return ()
 
 -- | Create a local key and lock for entities allocated in the current stack frame
 emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
@@ -414,7 +451,7 @@ emitShadowStackDeallocation = do
   return ()
 
 -- | Store the metadata in registers for the given pointer into the local variables allocated to hold it.
-emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> (Operand, Operand, Operand, Operand) -> m Metadata
+emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> (Operand, Operand, Operand, Operand) -> m LocalMetadata
 emitMetadataStoreToLocalVariables p (baseReg, boundReg, keyReg, lockReg) = do
   meta <- getLocalMetadataStorage p
   store (base meta) 8 baseReg
@@ -424,7 +461,7 @@ emitMetadataStoreToLocalVariables p (baseReg, boundReg, keyReg, lockReg) = do
   return meta
 
 -- | Load the metadata for a pointer function parameter from the shadow stack.
-emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Integer -> m Metadata
+emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Integer -> m LocalMetadata
 emitMetadataLoadFromShadowStack p ix = do
   ix' <- pure $ int32 ix
   baseReg <- emitRuntimeAPIFunctionCall "__softboundcets_load_base_shadow_stack" [ix']
@@ -456,30 +493,17 @@ emitMetadataStoreToShadowStack callee p ix = do
     _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
     return ()
   else do
-    case (fromJust meta) of
-      (_, meta'@(Local {})) -> do -- Metadata in local variables
-        ix' <- pure $ int32 ix
-        baseReg <- load (base meta') 0
-        boundReg <- load (bound meta') 0
-        keyReg <- load (key meta') 0
-        lockReg <- load (lock meta') 0
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
-        return ()
-      (_, meta'@(Global {})) -> do -- Metadata in global variables
-        ix' <- pure $ int32 ix
-        baseReg <- load (base meta') 0
-        boundReg <- load (bound meta') 0
-        keyReg <- load (key meta') 0
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-        glp <- gets (fromJust . globalLockPtr)
-        lockReg <- load glp 0
-        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
-        return ()
+    let meta' = snd $ fromJust meta
+    ix' <- pure $ int32 ix
+    baseReg <- load (base meta') 0
+    boundReg <- load (bound meta') 0
+    keyReg <- load (key meta') 0
+    lockReg <- load (lock meta') 0
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
+    return ()
 
 -- | Decide whether the given function symbol is a function that should not be instrumented.
 isIgnoredFunction :: MonadState SBCETSState m => Name -> m Bool
@@ -548,9 +572,6 @@ instrument blacklist' opts m = do
       | (GlobalVariable {}) <- g, isNothing $ initializer g                         = return () -- Uninitialized globals do not get metadata
       | (GlobalVariable {}) <- g = do
           let gName = name g
-          let gBaseName = Helpers.appendName gName ".sbcets.base"
-          let gBoundName = Helpers.appendName gName ".sbcets.bound"
-          let gKeyName = Helpers.appendName gName ".sbcets.key"
           gType <- typeOf (fromJust $ initializer g)
           case gType of
             (Left s) -> error $ "instrumentGlobalVariable: could not compute type of initializer (" ++ s ++ ")"
@@ -563,14 +584,9 @@ instrument blacklist' opts m = do
                               then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 1]) (ptr i8)
                               else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 1]) (ptr i8)
               let keyConst = Const.Int 64 1
-              emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBaseName, type' = ptr i8, isConstant = True, linkage = Private, initializer = Just baseConst }
-              emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gBoundName, type' = ptr i8, isConstant = True, linkage = Private, initializer = Just boundConst }
-              emitDefn $ GlobalDefinition $ globalVariableDefaults { name = gKeyName, type' = i64, isConstant = True, linkage = Private, initializer = Just keyConst }
-              let gMeta = Global (ConstantOperand $ Const.GlobalReference (ptr $ ptr i8) gBaseName)
-                                (ConstantOperand $ Const.GlobalReference (ptr $ ptr i8) gBoundName)
-                                (ConstantOperand $ Const.GlobalReference (ptr i64) gKeyName)
+              let gMeta = Global baseConst boundConst keyConst
               let gPtr = ConstantOperand gConst
-              modify $ \s -> s { globalStorage = Data.Map.insert gPtr gMeta $ globalStorage s }
+              modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
               mark gPtr Safe -- The address of a global variable is always safe
       | otherwise = do
         pg <- pure $ show g
@@ -586,9 +602,10 @@ instrument blacklist' opts m = do
                              , localStackFrameKeyPtr = Nothing
                              , localStackFrameLockPtr = Nothing
                              , currentFunction = Just f
+                             , currentFunctionGlobals = Data.Set.empty
                              , dontCareMetadata = Nothing
                              , nullMetadata = Nothing
-                             , localStorage = Data.Map.empty
+                             , localMetadata = Data.Map.empty
                              }
             let firstBlockLabel = (\(BasicBlock n _ _) -> n) $ head $ basicBlocks f
             -- Create the metadata for any non-function type pointer parameters
@@ -600,9 +617,9 @@ instrument blacklist' opts m = do
               error $ "instrumentFunction: could not compute type of function parameter (" ++ s ++ ")"
             else do
               let pointerArguments = map (\(_, Parameter t n _) -> (LocalReference t n)) $
-                                    filter (not . Helpers.isFunctionType . pointerReferent . fst) $
-                                    filter (Helpers.isPointerType . fst) $
-                                    zip (rights paramTys) params
+                                     filter (not . Helpers.isFunctionType . pointerReferent . fst) $
+                                     filter (Helpers.isPointerType . fst) $
+                                     zip (rights paramTys) params
               let shadowStackIndices :: [Integer] = [1..]
               emitBlockStart (mkName "sbcets_metadata_init")
               mapM_ allocateLocalMetadataStorage pointerArguments
@@ -652,6 +669,9 @@ instrument blacklist' opts m = do
       modify $ \s -> s { globalLockPtr = Just glp }
       -- Create a lock for local allocations
       emitLocalKeyAndLockCreation
+      -- Populate the local metadata for global variables used in the function
+      globals <- gets currentFunctionGlobals
+      mapM_ populateLocalMetadataForGlobal globals
       mapM_ instrumentInst i
       instrumentTerm t
 
@@ -728,33 +748,18 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockReg, keyReg]
                     return ()
               else do
-                case (fromJust meta) of
-                  (refTy, meta'@(Local {})) -> do -- Metadata in local variables
-                    baseReg <- load (base meta') 0
-                    boundReg <- load (bound meta') 0
-                    addr' <- bitcast addr (ptr i8)
-                    tySize <- sizeof 64 refTy
-                    -- Check the load is spatially in bounds
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [baseReg, boundReg, addr', tySize]
-                    -- Check the load is temporally in bounds
-                    keyReg <- load (key meta') 0
-                    lockReg <- load (lock meta') 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockReg, keyReg]
-                    return ()
-                  (refTy, meta'@(Global {})) -> do -- Metadata in global variables
-                    basePtr <- load (base meta') 0
-                    boundPtr <- load (bound meta') 0
-                    addr' <- bitcast addr (ptr i8)
-                    tySize <- sizeof 64 refTy
-                    -- Check the load is spatially in bounds
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [basePtr, boundPtr, addr', tySize]
-                    -- Check the load is temporally in bounds
-                    keyPtr <- load (key meta') 0
-                    lockPtr <- do
-                      glp <- gets (fromJust . globalLockPtr)
-                      load glp 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockPtr, keyPtr]
-                    return ()
+                let (refTy, meta') = fromJust meta
+                baseReg <- load (base meta') 0
+                boundReg <- load (bound meta') 0
+                addr' <- bitcast addr (ptr i8)
+                tySize <- sizeof 64 refTy
+                -- Check the load is spatially in bounds
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [baseReg, boundReg, addr', tySize]
+                -- Check the load is temporally in bounds
+                keyReg <- load (key meta') 0
+                lockReg <- load (lock meta') 0
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockReg, keyReg]
+                return ()
             Safe -> return ()
 
         Helpers.emitNamedInst i
@@ -847,7 +852,7 @@ instrument blacklist' opts m = do
                   associate gepResultPtr dcMeta -- The pointer created by getelementptr shares metadata storage with the parent pointer
                   mark gepResultPtr Unsafe -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
                 else do
-                  let (_, meta') = fromJust meta
+                  let meta' = snd $ fromJust meta
                   associate gepResultPtr meta' -- The pointer created by getelementptr shares metadata storage with the parent pointer
                   mark gepResultPtr Unsafe -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
@@ -867,7 +872,7 @@ instrument blacklist' opts m = do
             associate bitcastResultPtr dcMeta -- The pointer created by bitcast shares metadata storage with the parent pointer
             mark bitcastResultPtr Unsafe -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
           else do
-            let (_, meta') = fromJust meta
+            let meta' = snd $ fromJust meta
             associate bitcastResultPtr meta' -- The pointer created by bitcast shares metadata storage with the parent pointer
             mark bitcastResultPtr Unsafe -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
@@ -913,18 +918,10 @@ instrument blacklist' opts m = do
                   dcMeta <- gets (fromJust . dontCareMetadata)
                   return dcMeta
 
-              tLock' <- case tMeta' of
-                (Local {}) -> pure $ lock tMeta'
-                (Global {}) -> gets (fromJust . globalLockPtr)
-
-              fLock' <- case fMeta' of
-                (Local {}) -> pure $ lock fMeta'
-                (Global {}) -> gets (fromJust . globalLockPtr)
-
               base' <- select cond (base tMeta') (base fMeta')
               bound' <- select cond (bound tMeta') (bound fMeta')
               key' <- select cond (key tMeta') (key fMeta')
-              lock' <- select cond (tLock') (fLock')
+              lock' <- select cond (lock tMeta') (lock fMeta')
               associate resultPtr $ Local base' bound' key' lock'
               return ()
 
@@ -942,11 +939,7 @@ instrument blacklist' opts m = do
                                   return (dcMeta, n)
                                 else do
                                   let meta' = snd $ fromJust meta
-                                  lock' <- case meta' of
-                                    (Local {}) -> pure $ lock meta'
-                                    (Global {}) -> gets (fromJust . globalLockPtr)
-                                  let meta'' = Local (base meta') (bound meta') (key meta') lock'
-                                  return (meta'', n)
+                                  return (meta', n)
 
         when (not $ Helpers.isFunctionType ty) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
           incomingMeta <- forM incoming phiMeta
@@ -1029,33 +1022,18 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockReg, keyReg]
                     return ()
               else do
-                case (fromJust meta) of
-                  (refTy, meta'@(Local {})) -> do -- Metadata in local variables
-                    baseReg <- load (base meta') 0
-                    boundReg <- load (bound meta') 0
-                    tgt' <- bitcast tgt (ptr i8)
-                    tySize <- sizeof 64 refTy
-                    -- Check the store is spatially in bounds
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [baseReg, boundReg, tgt', tySize]
-                    -- Check the store is temporally in bounds
-                    keyReg <- load (key meta') 0
-                    lockReg <- load (lock meta') 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockReg, keyReg]
-                    return ()
-                  (refTy, meta'@(Global {})) -> do -- Metadata in global variables
-                    basePtr <- load (base meta') 0
-                    boundPtr <- load (bound meta') 0
-                    tgt' <- bitcast tgt (ptr i8)
-                    tySize <- sizeof 64 refTy
-                    -- Check the store is spatially in bounds
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [basePtr, boundPtr, tgt', tySize]
-                    -- Check the store is temporally in bounds
-                    keyPtr <- load (key meta') 0
-                    lockPtr <- do
-                      glp <- gets (fromJust . globalLockPtr)
-                      load glp 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockPtr, keyPtr]
-                    return ()
+                let (refTy, meta') = fromJust meta
+                baseReg <- load (base meta') 0
+                boundReg <- load (bound meta') 0
+                tgt' <- bitcast tgt (ptr i8)
+                tySize <- sizeof 64 refTy
+                -- Check the store is spatially in bounds
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [baseReg, boundReg, tgt', tySize]
+                -- Check the store is temporally in bounds
+                keyReg <- load (key meta') 0
+                lockReg <- load (lock meta') 0
+                _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockReg, keyReg]
+                return ()
             Safe -> return ()
 
         Helpers.emitNamedInst i
@@ -1086,27 +1064,15 @@ instrument blacklist' opts m = do
                   _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
                   return ()
                 else do
-                  case (fromJust meta) of
-                    (_, meta'@(Local {})) -> do -- Metadata in local variables
-                      tgt' <- bitcast tgt (ptr i8)
-                      baseReg <- load (base meta') 0
-                      boundReg <- load (bound meta') 0
-                      keyReg <- load (key meta') 0
-                      lockReg <- load (lock meta') 0
-                      -- Write the metadata for the stored pointer to the runtime
-                      _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
-                      return ()
-                    (_, meta'@(Global {})) -> do -- Metadata in global variables
-                      tgt' <- bitcast tgt (ptr i8)
-                      -- Write the metadata for the stored pointer to the runtime
-                      baseReg <- load (base meta') 0
-                      boundReg <- load (bound meta') 0
-                      keyReg <- load (key meta') 0
-                      lockReg <- do
-                        glp <- gets (fromJust . globalLockPtr)
-                        load glp 0
-                      _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
-                      return ()
+                  let meta' = snd $ fromJust meta
+                  tgt' <- bitcast tgt (ptr i8)
+                  baseReg <- load (base meta') 0
+                  boundReg <- load (bound meta') 0
+                  keyReg <- load (key meta') 0
+                  lockReg <- load (lock meta') 0
+                  -- Write the metadata for the stored pointer to the runtime
+                  _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
+                  return ()
 
       | otherwise = Helpers.emitNamedInst i
 
