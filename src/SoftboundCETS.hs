@@ -407,18 +407,33 @@ emitRuntimeMetadataLoad addr loadedPtr
       error $ "emitRuntimeMetadataLoad: expected local variable pointer but saw " ++ pLoadedPtr
 
 -- | Create local metadata variables in a function to hold the metadata for the given global variable
-populateLocalMetadataForGlobal :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m ()
+populateLocalMetadataForGlobal :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m ()
 populateLocalMetadataForGlobal g = do
   let g' = Helpers.walk g
   localMeta <- getLocalMetadataStorage g'
-  globalMeta <- gets ((! g') . globalMetadata)
-  glp <- gets (fromJust . globalLockPtr)
-  gl <- load glp 0
-  store (base localMeta) 8 (ConstantOperand $ gbase globalMeta)
-  store (bound localMeta) 8 (ConstantOperand $ gbound globalMeta)
-  store (key localMeta) 8 (ConstantOperand $ gkey globalMeta)
-  store (lock localMeta) 8 gl
-  return ()
+  present <- gets (Data.Map.member g' . globalMetadata)
+  if present
+  then do
+    globalMeta <- gets ((! g') . globalMetadata)
+    glp <- gets (fromJust . globalLockPtr)
+    gl <- load glp 0
+    store (base localMeta) 8 (ConstantOperand $ gbase globalMeta)
+    store (bound localMeta) 8 (ConstantOperand $ gbound globalMeta)
+    store (key localMeta) 8 (ConstantOperand $ gkey globalMeta)
+    store (lock localMeta) 8 gl
+    return ()
+  else do
+    tell ["populateLocalMetadataForGlobal: using don't-care metadata for unsupported global variable " ++ show g]
+    dcMeta <- gets (fromJust . dontCareMetadata)
+    base' <- load (base dcMeta) 0
+    bound' <- load (bound dcMeta) 0
+    key' <- load (key dcMeta) 0
+    lock' <- load (lock dcMeta) 0
+    store (base localMeta) 8 base'
+    store (bound localMeta) 8 bound'
+    store (key localMeta) 8 key'
+    store (lock localMeta) 8 lock'
+    return ()
 
 -- | Create a local key and lock for entities allocated in the current stack frame
 emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
