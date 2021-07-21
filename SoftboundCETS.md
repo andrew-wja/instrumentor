@@ -81,9 +81,9 @@ shadow stack.
 instruction causes local metadata variables for that allocation (which in LLVM
 is explictly held by reference to its address) to be created.
 
-5. Incoming values to a `phi` instruction must have their metadata available in
-local variables in order for `phi` nodes to be generated to select the correct
-metadata at runtime.
+5. Incoming values to a `phi` or `select` instruction must have their metadata
+available in local variables in order to select the correct metadata at
+runtime.
 
 6. Returning a pointer from a function requires the metadata for that pointer
 to be allocated in local variables in order for it to be pushed to the shadow
@@ -92,9 +92,7 @@ stack.
 All other instructions either have no effect on the metadata or merely
 introduce aliases, where multiple pointers share the same allocated metadata.
 For example, if a pointer is `bitcast` to a different type, both pointers share
-the same local metadata variables. The most complex of these are the `select`
-and `phi` instructions, which cause aliasing at runtime that is potentially
-opaque to the compiler.
+the same local metadata variables.
 
 ## Qualitative Implementation Concerns
 
