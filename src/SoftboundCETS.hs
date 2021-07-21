@@ -146,15 +146,27 @@ associate p m = modify $ \s -> s { localMetadata = Data.Map.insert p m $ localMe
 
 -- | Mark the registers holding the metadata values for the given pointer as live
 gen :: MonadState SBCETSState m => Operand -> LocalMetadata -> m ()
-gen p m = modify $ \s -> s { registerMetadata = Data.Map.insert p m $ registerMetadata s }
+gen p m = do
+  useRegMeta <- gets (CLI.reuseRegisters . options)
+  if useRegMeta
+  then modify $ \s -> s { registerMetadata = Data.Map.insert p m $ registerMetadata s }
+  else return ()
 
 -- | Mark the registers holding the metadata values for the given pointer as dead
 kill :: MonadState SBCETSState m => Operand -> m ()
-kill p = modify $ \s -> s { registerMetadata = Data.Map.delete p $ registerMetadata s }
+kill p =  do
+  useRegMeta <- gets (CLI.reuseRegisters . options)
+  if useRegMeta
+  then modify $ \s -> s { registerMetadata = Data.Map.delete p $ registerMetadata s }
+  else return ()
 
 -- | Check if live register metadata exists for the given pointer
 live :: MonadState SBCETSState m => Operand -> m Bool
-live p = gets (Data.Map.member p . registerMetadata)
+live p =  do
+  useRegMeta <- gets (CLI.reuseRegisters . options)
+  if useRegMeta
+  then gets (Data.Map.member p . registerMetadata)
+  else return False
 
 -- | 'inspect' traverses pointer-type expressions and returns the metadata.
 inspect :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, LocalMetadata))
