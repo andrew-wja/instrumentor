@@ -550,16 +550,26 @@ emitMetadataStoreToShadowStack callee p ix = do
   else do
     let meta' = snd $ fromJust meta
     ix' <- pure $ int32 ix
-    baseReg <- load (base meta') 0
-    boundReg <- load (bound meta') 0
-    keyReg <- load (key meta') 0
-    lockReg <- load (lock meta') 0
-    gen p (Local baseReg boundReg keyReg lockReg) -- We just generated these registers
-    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
-    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
-    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
-    return ()
+    haveRegMeta <- live p
+    if haveRegMeta
+    then do
+      (Local baseReg boundReg keyReg lockReg) <- gets ((! p) . registerMetadata)
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
+      return ()
+    else do
+      baseReg <- load (base meta') 0
+      boundReg <- load (bound meta') 0
+      keyReg <- load (key meta') 0
+      lockReg <- load (lock meta') 0
+      gen p (Local baseReg boundReg keyReg lockReg) -- We just generated these registers
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
+      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
+      return ()
 
 -- | Decide whether the given function symbol is a function that should not be instrumented.
 isIgnoredFunction :: MonadState SBCETSState m => Name -> m Bool
