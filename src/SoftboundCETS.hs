@@ -992,6 +992,7 @@ instrument blacklist' opts m = do
               key' <- select cond (key tMeta') (key fMeta')
               lock' <- select cond (lock tMeta') (lock fMeta')
               associate resultPtr $ Local base' bound' key' lock'
+              kill resultPtr
               return ()
 
       | (Phi (PointerType ty _) incoming _) <- o = do
@@ -1018,6 +1019,7 @@ instrument blacklist' opts m = do
           lock'  <- phi $ map (\(x, n) -> (lock x, n)) incomingMeta
           let resultPtr = LocalReference (ptr ty) v
           associate resultPtr $ Local base' bound' key' lock'
+          kill resultPtr
           return ()
 
       | otherwise = Helpers.emitNamedInst i
