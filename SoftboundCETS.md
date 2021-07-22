@@ -341,6 +341,20 @@ call void @free(i8* %4)
 call void @__softboundcets_deallocate_shadow_stack_space()
 ```
 
+Because this optimization generates and kills registers, we must take care to
+respect SSA form. In practice, what this means is that we must process the
+blocks of a function as a control-flow graph, as opposed to simply treating
+them as a list of independent basic blocks. Where we generate registers holding
+metadata for the same pointer in two control-flow sibling blocks, we must
+introduce a phi node to select the correct registers in successor blocks, since
+we will have different registers holding the metadata depending on which
+control edge we traversed to enter the block.
+
+A quick solution to this problem is to save and restore the set of live
+metadata registers at basic block entry and exit. This means that reuse of
+metadata in registers is only within the basic block which generated those
+registers. However, it requires no extra analysis to do this.
+
 This optimization is not implemented in the original SoftboundCETS.
 
 ### Realloc Dangling Pointer Improvement
