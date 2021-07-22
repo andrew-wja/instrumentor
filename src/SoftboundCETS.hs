@@ -787,8 +787,16 @@ instrument blacklist' opts m = do
 
     instrumentBlock (BasicBlock n i t) = do
       emitBlockStart n
+      baseRegisterMetadata' <- gets baseRegisterMetadata
+      boundRegisterMetadata' <- gets boundRegisterMetadata
+      keyRegisterMetadata' <- gets keyRegisterMetadata
+      lockRegisterMetadata' <- gets lockRegisterMetadata
       mapM_ instrumentInst i
       instrumentTerm t
+      modify $ \s -> s { baseRegisterMetadata = baseRegisterMetadata',
+                         boundRegisterMetadata = boundRegisterMetadata',
+                         keyRegisterMetadata = keyRegisterMetadata',
+                         lockRegisterMetadata = lockRegisterMetadata' }
 
     instrumentInst i@(v := o)
       | (Alloca ty count _ _) <- o = do
