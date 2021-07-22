@@ -972,10 +972,17 @@ instrument blacklist' opts m = do
                   tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
                   dcMeta <- gets (fromJust . dontCareMetadata)
                   associate gepResultPtr dcMeta -- The pointer created by getelementptr shares metadata storage with the parent pointer
+                  dcMetaRegs <- gets (fromJust . dontCareMetadataRegs)
+                  gen gepResultPtr dcMetaRegs -- We just generated these registers
                   mark gepResultPtr Unsafe -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
                 else do
                   let meta' = snd $ fromJust meta
                   associate gepResultPtr meta' -- The pointer created by getelementptr shares metadata storage with the parent pointer
+                  baseReg <- reload baseRegisterMetadata (base meta') addr
+                  boundReg <- reload boundRegisterMetadata (bound meta') addr
+                  keyReg <- reload keyRegisterMetadata (key meta') addr
+                  lockReg <- reload lockRegisterMetadata (lock meta') addr
+                  gen gepResultPtr (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                   mark gepResultPtr Unsafe -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
 
@@ -992,10 +999,17 @@ instrument blacklist' opts m = do
             tell ["in function " ++ pFunc ++ ": using don't-care metadata for unsupported pointer " ++ pAddr ++ " in " ++ pInst]
             dcMeta <- gets (fromJust . dontCareMetadata)
             associate bitcastResultPtr dcMeta -- The pointer created by bitcast shares metadata storage with the parent pointer
+            dcMetaRegs <- gets (fromJust . dontCareMetadataRegs)
+            gen bitcastResultPtr dcMetaRegs -- We just generated these registers
             mark bitcastResultPtr Unsafe -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
           else do
             let meta' = snd $ fromJust meta
             associate bitcastResultPtr meta' -- The pointer created by bitcast shares metadata storage with the parent pointer
+            baseReg <- reload baseRegisterMetadata (base meta') addr
+            boundReg <- reload boundRegisterMetadata (bound meta') addr
+            keyReg <- reload keyRegisterMetadata (key meta') addr
+            lockReg <- reload lockRegisterMetadata (lock meta') addr
+            gen bitcastResultPtr (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
             mark bitcastResultPtr Unsafe -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
         Helpers.emitNamedInst i
 
