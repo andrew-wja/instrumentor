@@ -18,10 +18,10 @@ build-llvm: patch-llvm
 	./scripts/build-llvm.sh
 
 build-debug-runtimes:
-	./scripts/build-runtimes.sh Debug
+	CFLAGS="-g -O3" LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH ./scripts/build-runtimes.sh
 
 build-release-runtimes:
-	./scripts/build-runtimes.sh Release
+	CFLAGS="-O3" LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH ./scripts/build-runtimes.sh
 
 build-instrumentor:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack build
@@ -33,18 +33,21 @@ dist/instrumentor: build-instrumentor
 dist/runtimes/release: build-release-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/release/
-	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
+	for x in `ls runtimes --hide='Makefile'`; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
 
 dist/runtimes/debug: build-debug-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/debug/
-	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
+	for x in `ls runtimes --hide='Makefile'`; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
 
 test: build-release-runtimes
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented.dump run-instrumented; done
 
 debug-test: build-debug-runtimes
 	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
+
+lto-test: build-release-runtimes
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented.lto.dump run-lto-instrumented; done
 
 dist/doc:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack haddock --haddock-arguments '--hyperlinked-source --odir=dist/doc'

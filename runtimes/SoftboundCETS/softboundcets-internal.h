@@ -58,10 +58,6 @@
 
 #define __WEAK__ __attribute__((__weak__))
 
-#define __INLINE __attribute__((__always_inline__))
-
-#define __WEAK_INLINE __attribute__((__weak__,__always_inline__))
-
 #define __NO_INLINE __attribute__((__noinline__))
 
 #if defined(__APPLE__)

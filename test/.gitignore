@@ -1,11 +1,7 @@
 test
-test.bc
-test.ll
-test.s
 instrumented
-instrumented.bc
-instrumented.ll
-instrumented.alt.ll
-instrumented.s
-instrumented.dump
 dummy-instrumented
+*.bc
+*.ll
+*.s
+*.dump

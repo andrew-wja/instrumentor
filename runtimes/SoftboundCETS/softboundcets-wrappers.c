@@ -130,7 +130,7 @@ softboundcets_fdopendir(int fd) {
   return (DIR*)ret_ptr;
 }
 
-__WEAK__  char*
+__WEAK__ char*
 softboundcets_mkdtemp(char *template) {
   char* ret_ptr = mkdtemp(template);
   __softboundcets_propagate_metadata_shadow_stack_from(1, 0);

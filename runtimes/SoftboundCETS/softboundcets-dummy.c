@@ -42,7 +42,7 @@
 #include "softboundcets-internal.h"
 #include "softboundcets-interface.h"
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_spatial_load_dereference_check(void *base,
                                                void *bound,
                                                void *ptr,
@@ -53,7 +53,7 @@ __softboundcets_spatial_load_dereference_check(void *base,
 #endif
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_spatial_store_dereference_check(void *base,
                                                 void *bound,
                                                 void *ptr,
@@ -64,7 +64,7 @@ __softboundcets_spatial_store_dereference_check(void *base,
 #endif
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_temporal_load_dereference_check(void* pointer_lock,
                                                 size_t key) {
 #if defined(SOFTBOUNDCETS_DEBUG)
@@ -73,7 +73,7 @@ __softboundcets_printf("[temporal_load_dereference_check] key=%zx, lock=%p, next
 #endif
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_temporal_store_dereference_check(void* pointer_lock,
                                                  size_t key) {
 #if defined(SOFTBOUNDCETS_DEBUG)
@@ -82,7 +82,7 @@ __softboundcets_printf("[temporal_store_dereference_check] key=%zx, lock=%p\n",
 #endif
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_destroy_stack_key(size_t key){
   __softboundcets_stack_key_table_ptr--;
 
@@ -100,7 +100,7 @@ __softboundcets_destroy_stack_key(size_t key){
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 
   size_t temp_id = __softboundcets_key_id_counter++;
@@ -117,7 +117,7 @@ __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 #endif
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
 
   if (ptr_lock != NULL && ptr != NULL) {
@@ -135,14 +135,14 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
   }
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_memcopy_check(void* dest, void* src, size_t size,
                               void* dest_base, void* dest_bound,
                               void* src_base, void* src_bound,
                               size_t dest_key, void* dest_lock,
                               size_t src_key, void* src_lock) {}
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_memset_check(void* dest, size_t size,
                              void* dest_base, void* dest_bound,
                              size_t dest_key, void* dest_lock) {}
