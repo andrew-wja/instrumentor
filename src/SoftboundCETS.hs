@@ -24,10 +24,8 @@ import Data.Maybe (isJust, fromJust, isNothing)
 import Data.String (IsString(..))
 import Data.List (nub, sort, intercalate, partition)
 import Data.Either
-import LLVM.AST hiding (args, index, type', functionAttributes)
+import LLVM.AST hiding (args, index, type')
 import LLVM.AST.Global
-import LLVM.AST.Linkage
-import LLVM.AST.FunctionAttribute
 import LLVM.AST.Type
 import LLVM.AST.Typed (typeOf, indexTypeByOperands)
 import qualified LLVM.AST.Constant as Const
@@ -434,13 +432,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
 emitRuntimeAPIFunctionDecl :: (HasCallStack, MonadModuleBuilder m) => (Name, Type) -> m ()
 emitRuntimeAPIFunctionDecl decl
   | (fname, (FunctionType retType argTypes _)) <- decl = do
-      _ <- emitDefn $ GlobalDefinition functionDefaults
-             { name        = fname
-             , linkage     = External
-             , parameters  = ([Parameter ty (mkName "") [] | ty <- argTypes], False)
-             , returnType  = retType
-             , functionAttributes = [(Right AlwaysInline)]
-             }
+      _ <- extern fname argTypes retType
       return ()
   | otherwise = undefined
 
