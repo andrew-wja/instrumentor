@@ -40,11 +40,11 @@ dist/runtimes/debug: build-debug-runtimes
 	cp -r runtimes-build/lib/* dist/runtimes/debug/
 	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
 
-test: build-release-runtimes
-	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented.dump run-instrumented; done
+test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-instrumented-release; done
 
-debug-test: build-debug-runtimes
-	for x in `ls test`; do $(MAKE) -C test/$$x run-instrumented; done
+dummy-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-dummy-instrumented-release; done
 
 dist/doc:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack haddock --haddock-arguments '--hyperlinked-source --odir=dist/doc'
