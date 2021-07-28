@@ -46,7 +46,7 @@
 #include "softboundcets-internal.h"
 #include "softboundcets-interface.h"
 
-__WEAK__ void*
+__WEAK__ inline void*
 __softboundcets_get_global_lock(){
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[get_global_lock] lock=%p, *lock=%zx\n",
@@ -55,7 +55,7 @@ __softboundcets_get_global_lock(){
   return __softboundcets_global_lock;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_allocate_shadow_stack_space(int num_pointer_args) {
 
   size_t* prev_stack_size_ptr = __softboundcets_shadow_stack_ptr + 1;
@@ -89,7 +89,7 @@ __softboundcets_deallocate_shadow_stack_space() {
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_store_base_shadow_stack(void* base,
                                                            int arg_no) {
   assert(arg_no >= 0);
@@ -104,7 +104,7 @@ __softboundcets_store_base_shadow_stack(void* base,
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_store_bound_shadow_stack(void* bound,
                                                             int arg_no) {
   assert(arg_no >= 0);
@@ -119,7 +119,7 @@ __softboundcets_store_bound_shadow_stack(void* bound,
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_store_key_shadow_stack(size_t key,
                                                           int arg_no) {
   assert(arg_no >= 0);
@@ -134,7 +134,7 @@ __softboundcets_store_key_shadow_stack(size_t key,
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_store_lock_shadow_stack(void* lock,
                                                            int arg_no) {
   assert(arg_no >= 0);
@@ -149,7 +149,7 @@ __softboundcets_store_lock_shadow_stack(void* lock,
   return;
 }
 
-__WEAK__ void*
+__WEAK__ inline void*
 __softboundcets_load_base_shadow_stack(int arg_no) {
   assert (arg_no >= 0 );
   size_t count = 2 +  arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __BASE_INDEX;
@@ -163,7 +163,7 @@ __softboundcets_load_base_shadow_stack(int arg_no) {
   return base;
 }
 
-__WEAK__ void*
+__WEAK__ inline void*
 __softboundcets_load_bound_shadow_stack(int arg_no) {
   assert (arg_no >= 0 );
   size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS  + __BOUND_INDEX;
@@ -177,7 +177,7 @@ __softboundcets_load_bound_shadow_stack(int arg_no) {
   return bound;
 }
 
-__WEAK__ size_t
+__WEAK__ inline size_t
 __softboundcets_load_key_shadow_stack(int arg_no) {
   assert (arg_no >= 0 );
   size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS  + __KEY_INDEX;
@@ -191,7 +191,7 @@ __softboundcets_load_key_shadow_stack(int arg_no) {
   return key;
 }
 
-__WEAK__ void*
+__WEAK__ inline void*
 __softboundcets_load_lock_shadow_stack(int arg_no) {
   assert (arg_no >= 0 );
   size_t count = 2 + arg_no * __SOFTBOUNDCETS_METADATA_NUM_FIELDS + __LOCK_INDEX;
@@ -205,7 +205,7 @@ __softboundcets_load_lock_shadow_stack(int arg_no) {
   return lock;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
   assert(ptr_lock && "[create_stack_key] passed a null pointer to parent lock location");
   assert(ptr_key && "[create_stack_key] passed a null pointer to key location");
@@ -229,7 +229,7 @@ __softboundcets_create_stack_key(void** ptr_lock, size_t* ptr_key) {
   return;
 }
 
-__WEAK__ void
+__WEAK__ inline void
 __softboundcets_metadata_check(void** base,
                                void** bound,
                                size_t* key,
