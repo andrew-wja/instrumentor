@@ -33,15 +33,19 @@ dist/instrumentor: build-instrumentor
 dist/runtimes/release: build-release-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/release/
-	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
+	cp -r runtimes/*/lib*.bc dist/runtimes/release
+	for x in SoftboundCETS; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
 
 dist/runtimes/debug: build-debug-runtimes
 	mkdir -p $@
 	cp -r runtimes-build/lib/* dist/runtimes/debug/
-	for x in `ls runtimes --hide='*.txt'`; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
+	for x in SoftboundCETS; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
 
 test: dist/runtimes/release
-	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-instrumented-release; done
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented-release.dump run-instrumented-release; done
+
+lto-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented-release-lto.dump run-instrumented-release-lto; done
 
 dummy-test: dist/runtimes/release
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-dummy-instrumented-release; done
@@ -51,6 +55,7 @@ dist/doc:
 
 dist-clean:
 	rm -rf dist*
+	${MAKE} -C runtimes clean
 
 test-clean:
 	for x in `ls test`; do $(MAKE) -C test/$$x clean; done

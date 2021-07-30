@@ -10,4 +10,8 @@ cmake -G "Unix Makefiles" ../runtimes -DCMAKE_BUILD_TYPE=$1 -DLLVM_INSTALL_DIR=$
 
 cmake --build .
 
+# LTO bitcode files are build with make
+
+make -B -C ../runtimes/SoftboundCETS all
+
 popd
