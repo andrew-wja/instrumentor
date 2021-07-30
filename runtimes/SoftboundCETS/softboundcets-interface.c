@@ -50,16 +50,14 @@ __softboundcets_spatial_load_dereference_check(void *base,
                                                void *bound,
                                                void *ptr,
                                                size_t size_of_type) {
-  if (base != NULL && bound != NULL) {
-    if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
-      __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
-                             base, bound, ptr);
-      if (ptr < base) {
-        __softboundcets_abort_reason("read through pointer out of bounds below object base address");
-      }
-      if ((void*)((char*)ptr + size_of_type) > bound) {
-        __softboundcets_abort_reason("read through pointer out of bounds above object bound address");
-      }
+  if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
+    __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
+                           base, bound, ptr);
+    if (ptr < base) {
+      __softboundcets_abort_reason("read through pointer out of bounds below object base address");
+    }
+    if ((void*)((char*)ptr + size_of_type) > bound) {
+      __softboundcets_abort_reason("read through pointer out of bounds above object bound address");
     }
   }
 
@@ -75,18 +73,17 @@ __softboundcets_spatial_store_dereference_check(void *base,
                                                 void *bound,
                                                 void *ptr,
                                                 size_t size_of_type) {
-  if (base != NULL && bound != NULL) {
-    if ((ptr < base) || ((void*)((char*)ptr + size_of_type) > bound)) {
-      __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
-                             base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
-      if (ptr < base) {
-        __softboundcets_abort_reason("write through pointer out of bounds below object base address");
-      }
-      if ((void*)((char*)ptr + size_of_type) > bound) {
-        __softboundcets_abort_reason("write through pointer out of bounds above object bound address");
-      }
+  if ((ptr < base) || ((void*)((char*)ptr + size_of_type) > bound)) {
+    __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
+                           base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
+    if (ptr < base) {
+      __softboundcets_abort_reason("write through pointer out of bounds below object base address");
+    }
+    if ((void*)((char*)ptr + size_of_type) > bound) {
+      __softboundcets_abort_reason("write through pointer out of bounds above object bound address");
     }
   }
+
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
                          base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
@@ -105,7 +102,12 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
                              key, temp, __softboundcets_lock_next_location);
       __softboundcets_abort_reason("read through pointer after free or return from function");
     }
+  } else {
+    __softboundcets_printf("[temporal_load_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
+                             key, pointer_lock);
+    __softboundcets_abort_reason("null pointer dereference");
   }
+
 #if defined(SOFTBOUNDCETS_DEBUG)
 __softboundcets_printf("[temporal_load_dereference_check] key=%zx, lock=%p, next_ptr=%zx\n",
                              key, pointer_lock, __softboundcets_lock_next_location);
@@ -124,7 +126,12 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
                              key, temp);
       __softboundcets_abort_reason("write through pointer after free or return from function");
     }
+  } else {
+    __softboundcets_printf("[temporal_store_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
+                             key, pointer_lock);
+    __softboundcets_abort_reason("null pointer dereference");
   }
+
 #if defined(SOFTBOUNDCETS_DEBUG)
 __softboundcets_printf("[temporal_store_dereference_check] key=%zx, lock=%p\n",
                              key, pointer_lock);
