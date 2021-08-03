@@ -1,4 +1,4 @@
-.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test dist-clean test-clean clean really-clean
+.PHONY: all ensure-submodules patch-llvm build-llvm build-debug-runtimes build-release-runtimes build-instrumentor dist/instrumentor dist/runtimes/release dist/runtimes/debug test debug-test dist-clean test-clean clean really-clean llvm-clean runtimes-clean
 
 all: dist/instrumentor dist/runtimes/release
 
@@ -17,11 +17,11 @@ patch-llvm: llvm-patches/glibc-2.31.patch
 build-llvm: patch-llvm
 	./scripts/build-llvm.sh
 
-build-debug-runtimes:
-	./scripts/build-runtimes.sh Debug
+llvm-clean:
+	rm -rf llvm-build llvm-root
 
-build-release-runtimes:
-	./scripts/build-runtimes.sh Release
+runtimes-clean:
+	${MAKE} -C ./runtimes clean
 
 build-instrumentor:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack build
@@ -30,16 +30,15 @@ dist/instrumentor: build-instrumentor
 	mkdir -p dist
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack --local-bin-path dist install
 
-dist/runtimes/release: build-release-runtimes
+dist/runtimes/release:
 	mkdir -p $@
-	cp -r runtimes-build/lib/* dist/runtimes/release/
-	cp -r runtimes/*/lib*.bc dist/runtimes/release
-	for x in SoftboundCETS; do cp runtimes/$$x/blacklist dist/runtimes/release/blacklist.$$x; done
+	${MAKE} -B -C ./runtimes all
+	${MAKE} DESTDIR=$(realpath $@) -C ./runtimes install
 
-dist/runtimes/debug: build-debug-runtimes
+dist/runtimes/debug:
 	mkdir -p $@
-	cp -r runtimes-build/lib/* dist/runtimes/debug/
-	for x in SoftboundCETS; do cp runtimes/$$x/blacklist dist/runtimes/debug/blacklist.$$x; done
+	${MAKE} -B -C ./runtimes all CFLAGS="-g -DSOFTBOUNDCETS_DEBUG"
+	${MAKE} DESTDIR=$(realpath $@) -C ./runtimes install
 
 test: dist/runtimes/release
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented-release.dump run-instrumented-release; done

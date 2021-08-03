@@ -1,24 +1,24 @@
 .PHONY: all clean install
 
-all: libSoftBoundCETS_full_rt.bc libSoftBoundCETS_minimal_rt.bc libSoftBoundCETS_dummy_rt.bc libSoftBoundCETS_minimal_dummy_rt.bc
+all: libSoftBoundCETS_full.a libSoftBoundCETS_dummy.a
+
+CFLAGS+=-Wall -pedantic -O3 -march=native -fno-strict-aliasing
+
+ARFLAGS=-rcs
 
 clean:
 	rm -f *.bc
 
-%.bc: %.c
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH clang -march=native -O1 -flto -c $< -o $@
+%.o: %.c
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH clang ${CFLAGS} -flto -c $< -o $@
 
-libSoftBoundCETS_full_rt.bc: softboundcets-common.bc softboundcets-init.bc softboundcets-interface.bc softboundcets-internal.bc softboundcets-wrappers.bc
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-link -v $^ -o $@
+libSoftBoundCETS_full.a: softboundcets-common.o softboundcets-init.o softboundcets-internal.o softboundcets-wrappers.o softboundcets-interface.o
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-ar ${ARFLAGS} $@ $^
 
-libSoftBoundCETS_minimal_rt.bc: softboundcets-common.bc softboundcets-init.bc softboundcets-interface.bc softboundcets-internal.bc
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-link -v $^ -o $@
+libSoftBoundCETS_dummy.a: softboundcets-common.o softboundcets-init.o softboundcets-internal.o softboundcets-wrappers.o softboundcets-dummy.o
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-ar ${ARFLAGS} $@ $^
 
-libSoftBoundCETS_dummy_rt.bc: softboundcets-common.bc softboundcets-dummy.bc softboundcets-init.bc softboundcets-internal.bc softboundcets-wrappers.bc
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-link -v $^ -o $@
-
-libSoftBoundCETS_minimal_dummy_rt.bc: softboundcets-common.bc softboundcets-dummy.bc softboundcets-init.bc softboundcets-internal.bc
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-link -v $^ -o $@
-
-install: libSoftBoundCETS_full_rt.bc libSoftBoundCETS_minimal_rt.bc libSoftBoundCETS_dummy_rt.bc libSoftBoundCETS_minimal_dummy_rt.bc
-	cp $^ ${DESTDIR}
+install: libSoftBoundCETS_full.a libSoftBoundCETS_dummy.a
+	mkdir -p ${DESTDIR}/lib
+	cp $^ ${DESTDIR}/lib
+	cp blacklist ${DESTDIR}/blacklist.SoftboundCETS
