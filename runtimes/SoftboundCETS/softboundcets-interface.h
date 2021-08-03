@@ -47,87 +47,87 @@
 
 #include "softboundcets-internal.h"
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_spatial_load_dereference_check(void *base,
                                                void *bound,
                                                void *ptr,
                                                size_t size_of_type);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_spatial_store_dereference_check(void *base,
                                                 void *bound,
                                                 void *ptr,
                                                 size_t size_of_type);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_temporal_load_dereference_check(void* pointer_lock,
                                                 size_t key);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_temporal_store_dereference_check(void* pointer_lock,
                                                  size_t key);
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_get_global_lock();
 
 /* Shadow stack routines */
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_allocate_shadow_stack_space(int num_pointer_args);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_deallocate_shadow_stack_space();
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_base_shadow_stack(void* base,
                                         int arg_no);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_bound_shadow_stack(void* bound,
                                          int arg_no);
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_load_base_shadow_stack(int arg_no);
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_load_bound_shadow_stack(int arg_no);
 
-__WEAK__ size_t
+__WEAK_INLINE__ size_t
 __softboundcets_load_key_shadow_stack(int arg_no);
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_load_lock_shadow_stack(int arg_no);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_key_shadow_stack(size_t key,
                                        int arg_no);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_lock_shadow_stack(void* lock,
                                         int arg_no);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_create_stack_key(void** ptr_lock,
                                         size_t* ptr_key);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_destroy_stack_key(size_t key);
 
 /* Metadata routines */
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_metadata_check(void** base,
                                void** bound,
                                size_t* key,
                                void** lock);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_metadata_load(void* addr_of_ptr,
                               void** base,
                               void** bound,
                               size_t* key,
                               void** lock);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_metadata_store(void* addr_of_ptr,
                                void* base,
                                void* bound,
@@ -136,20 +136,20 @@ __softboundcets_metadata_store(void* addr_of_ptr,
 
 /* Miscellaneous routines */
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_memcopy_check(void* dest, void* src, size_t size,
                               void* dest_base, void* dest_bound,
                               void* src_base, void* src_bound,
                               size_t dest_key, void* dest_lock,
                               size_t src_key, void* src_lock);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_memset_check(void* dest, size_t size,
                              void* dest_base, void* dest_bound,
                              size_t dest_key, void* dest_lock);

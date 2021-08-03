@@ -58,7 +58,9 @@
 
 #define __WEAK__ __attribute__((__weak__))
 
-#define __NO_INLINE __attribute__((__noinline__))
+#define __WEAK_INLINE__ __attribute__((__weak__,__always_inline__))
+
+#define __NO_INLINE__ __attribute__((__noinline__))
 
 #if defined(__APPLE__)
 #define SOFTBOUNDCETS_MMAP_FLAGS (MAP_ANON|MAP_NORESERVE|MAP_PRIVATE)
@@ -84,7 +86,7 @@ static const int __SOFTBOUNDCETS_PREALLOCATE_TRIE = 0;
 extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort();
 extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort_reason(const char*);
 extern void __softboundcets_printf(const char* str, ...);
-extern __NO_INLINE void __softboundcets_stub(void);
+extern __NO_INLINE__ void __softboundcets_stub(void);
 extern void __softboundcets_init(void);
 
 /* Trie represented by the following by a structure with four fields
@@ -140,48 +142,48 @@ static const size_t __SOFTBOUNDCETS_SHADOW_STACK_ENTRIES = ((size_t) 128 * (size
 static const size_t __SOFTBOUNDCETS_TRIE_SECONDARY_TABLE_ENTRIES = ((size_t) 4 * (size_t) 1024 * (size_t) 1024);
 #endif
 
-__WEAK__ __softboundcets_trie_entry_t*
+__WEAK_INLINE__ __softboundcets_trie_entry_t*
 __softboundcets_trie_allocate();
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_allocate_lock_location();
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_allocation_secondary_trie_allocate_range(void* initial_ptr,
                                                          size_t size);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_allocation_secondary_trie_allocate(void* addr_of_ptr);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_dummy();
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_metadata_copy(void* dest, void* from, size_t size);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_shrink_bounds(void* new_base, void* new_bound,
                               void* old_base, void* old_bound,
                               void** base_alloca, void** bound_alloca);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_read_shadow_stack_metadata_store(char** endptr, int arg_num);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
                                                      int to_argnum);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_null_return_metadata();
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
                                       void* lock);
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_dontcare_return_metadata();
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_dontcare_base_return_metadata(void* base);
 
 void*

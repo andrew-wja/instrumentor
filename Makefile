@@ -33,12 +33,12 @@ dist/instrumentor: build-instrumentor
 dist/runtimes/release:
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all
-	${MAKE} DESTDIR=$(realpath $@) -C ./runtimes install
+	${MAKE} DESTDIR=$(realpath ./dist/runtimes/release) -C ./runtimes install
 
 dist/runtimes/debug:
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all CFLAGS="-g -DSOFTBOUNDCETS_DEBUG"
-	${MAKE} DESTDIR=$(realpath $@) -C ./runtimes install
+	${MAKE} DESTDIR=$(realpath ./dist/runtimes/debug) -C ./runtimes install
 
 test: dist/runtimes/release
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented-release.dump run-instrumented-release; done

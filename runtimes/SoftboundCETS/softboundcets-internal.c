@@ -99,7 +99,7 @@ __softboundcets_printf(const char* str, ...) {
   va_end(args);
 }
 
-__NO_INLINE void
+__NO_INLINE__ void
 __softboundcets_stub(void) {
   return;
 }
@@ -114,7 +114,7 @@ size_t* __softboundcets_lock_new_location = NULL;
 size_t __softboundcets_key_id_counter = 2; /* 0 = unused, 1 = globals*/
 void* __softboundcets_malloc_start_address = NULL;
 
-__WEAK__ __softboundcets_trie_entry_t*
+__WEAK_INLINE__ __softboundcets_trie_entry_t*
 __softboundcets_trie_allocate() {
   __softboundcets_trie_entry_t* secondary_entry;
   size_t length = (__SOFTBOUNDCETS_TRIE_SECONDARY_TABLE_ENTRIES) * sizeof(__softboundcets_trie_entry_t);
@@ -123,7 +123,7 @@ __softboundcets_trie_allocate() {
   return secondary_entry;
 }
 
-__WEAK__ void*
+__WEAK_INLINE__ void*
 __softboundcets_allocate_lock_location() {
   void* temp = NULL;
   if(__softboundcets_lock_next_location == NULL) {
@@ -145,7 +145,7 @@ __softboundcets_allocate_lock_location() {
   }
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_allocation_secondary_trie_allocate_range(void* initial_ptr,
                                                          size_t size) {
 
@@ -170,7 +170,7 @@ __softboundcets_allocation_secondary_trie_allocate_range(void* initial_ptr,
   }
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_allocation_secondary_trie_allocate(void* addr_of_ptr) {
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE)
@@ -202,12 +202,12 @@ __softboundcets_allocation_secondary_trie_allocate(void* addr_of_ptr) {
   return;
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_dummy(){
   printf("calling abort");
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_metadata_copy(void* dest, void* from, size_t size) {
 
   size_t dest_ptr = (size_t) dest;
@@ -298,7 +298,7 @@ __softboundcets_metadata_copy(void* dest, void* from, size_t size) {
   return;
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_shrink_bounds(void* new_base, void* new_bound,
                               void* old_base, void* old_bound,
                               void** base_alloca, void** bound_alloca) {
@@ -306,7 +306,7 @@ __softboundcets_shrink_bounds(void* new_base, void* new_bound,
   *(bound_alloca) = new_bound > old_bound? old_bound : new_bound;
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_read_shadow_stack_metadata_store(char** endptr, int arg_num) {
     void* nptr_base = __softboundcets_load_base_shadow_stack(arg_num);
     void* nptr_bound = __softboundcets_load_bound_shadow_stack(arg_num);
@@ -316,7 +316,7 @@ __softboundcets_read_shadow_stack_metadata_store(char** endptr, int arg_num) {
                                    nptr_lock);
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
                                                      int to_argnum) {
   void* base = __softboundcets_load_base_shadow_stack(from_argnum);
@@ -329,14 +329,14 @@ __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
   __softboundcets_store_lock_shadow_stack(lock, to_argnum);
 }
 
-__WEAK__ void __softboundcets_store_null_return_metadata() {
+__WEAK_INLINE__ void __softboundcets_store_null_return_metadata() {
   __softboundcets_store_base_shadow_stack(NULL, 0);
   __softboundcets_store_bound_shadow_stack(NULL, 0);
   __softboundcets_store_key_shadow_stack(0, 0);
   __softboundcets_store_lock_shadow_stack(NULL, 0);
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
                                       void* lock) {
   __softboundcets_store_base_shadow_stack(base, 0);
@@ -345,7 +345,7 @@ __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
   __softboundcets_store_lock_shadow_stack(lock, 0);
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_dontcare_return_metadata() {
   __softboundcets_store_base_shadow_stack(NULL, 0);
   __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
@@ -353,7 +353,7 @@ __softboundcets_store_dontcare_return_metadata() {
   __softboundcets_store_lock_shadow_stack(__softboundcets_global_lock, 0);
 }
 
-__WEAK__ void
+__WEAK_INLINE__ void
 __softboundcets_store_dontcare_base_return_metadata(void* base) {
   __softboundcets_store_base_shadow_stack(base, 0);
   __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
@@ -361,22 +361,22 @@ __softboundcets_store_dontcare_base_return_metadata(void* base) {
   __softboundcets_store_lock_shadow_stack(__softboundcets_global_lock, 0);
 }
 
-inline void*
+void*
 __softboundcets_unchecked_calloc(size_t nmemb, size_t size){
   return calloc(nmemb, size);
 }
 
-inline void*
+void*
 __softboundcets_unchecked_malloc(size_t size){
   return malloc(size);
 }
 
-inline void
+void
 __softboundcets_unchecked_free(void* ptr){
   free(ptr);
 }
 
-inline void*
+void*
 __softboundcets_unchecked_mmap(void* addr,
                                  size_t length, int prot,
                                  int flags, int fd,
