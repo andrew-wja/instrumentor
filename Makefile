@@ -24,15 +24,17 @@ dist/instrumentor: build-instrumentor
 	mkdir -p dist
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack --local-bin-path dist install
 
+dist/runtimes/release: DESTDIR = `realpath $@`
 dist/runtimes/release:
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all
-	${MAKE} DESTDIR=$(realpath ./dist/runtimes/release) -C ./runtimes install
+	${MAKE} DESTDIR=${DESTDIR} -C ./runtimes install
 
+dist/runtimes/debug: DESTDIR = `realpath $@`
 dist/runtimes/debug:
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all CFLAGS="-g -DSOFTBOUNDCETS_DEBUG"
-	${MAKE} DESTDIR=$(realpath ./dist/runtimes/debug) -C ./runtimes install
+	${MAKE} DESTDIR=${DESTDIR} -C ./runtimes install
 
 dist/doc:
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack haddock --haddock-arguments '--hyperlinked-source --odir=dist/doc'
