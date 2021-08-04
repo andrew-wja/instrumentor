@@ -99,7 +99,7 @@ __softboundcets_printf(const char* str, ...) {
   va_end(args);
 }
 
-__NO_INLINE__ void
+__NO_INLINE void
 __softboundcets_stub(void) {
   return;
 }

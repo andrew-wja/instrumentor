@@ -60,7 +60,7 @@
 
 #define __WEAK_INLINE__ __attribute__((__weak__,__always_inline__))
 
-#define __NO_INLINE__ __attribute__((__noinline__))
+#define __NO_INLINE __attribute__((__noinline__))
 
 #if defined(__APPLE__)
 #define SOFTBOUNDCETS_MMAP_FLAGS (MAP_ANON|MAP_NORESERVE|MAP_PRIVATE)
@@ -86,7 +86,7 @@ static const int __SOFTBOUNDCETS_PREALLOCATE_TRIE = 0;
 extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort();
 extern __SOFTBOUNDCETS_NORETURN void __softboundcets_abort_reason(const char*);
 extern void __softboundcets_printf(const char* str, ...);
-extern __NO_INLINE__ void __softboundcets_stub(void);
+extern __NO_INLINE void __softboundcets_stub(void);
 extern void __softboundcets_init(void);
 
 /* Trie represented by the following by a structure with four fields

@@ -54,27 +54,25 @@ instrumented-release.exe: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_full.a) instrumented.ll -o instrumented-release.exe
 
 instrumented-debug.exe: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto -L$(realpath ../../dist/runtimes/debug/lib) -lSoftBoundCETS_full instrumented.ll -o instrumented-debug.exe
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_full.a) instrumented.ll -o instrumented-debug.exe
 
 run-instrumented-release: instrumented-release.exe
 	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./instrumented-release.exe
 
-debug-instrumented: instrumented-debug.exe
-	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) gdb instrumented-debug.exe
+run-instrumented-debug: instrumented-debug.exe
+	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./instrumented-debug.exe
 
 
 # Instrumented version of the test program linked with a dummy runtime that does no checking (for debugging purposes)
 dummy-instrumented-debug.exe: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto -L$(realpath ../../dist/runtimes/debug/lib) -lSoftBoundCETS_dummy instrumented.ll -o dummy-instrumented-debug.exe
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_dummy.a) instrumented.ll -o dummy-instrumented-debug.exe
 
 run-dummy-instrumented-debug: dummy-instrumented-debug.exe
 	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./dummy-instrumented-debug.exe
 
 dummy-instrumented-release.exe: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto -L$(realpath ../../dist/runtimes/release/lib) -lSoftBoundCETS_dummy instrumented.ll -o dummy-instrumented-release.exe
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_dummy.a) instrumented.ll -o dummy-instrumented-release.exe
 
 run-dummy-instrumented-release: dummy-instrumented-release.exe
 	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./dummy-instrumented-release.exe
 
-debug-dummy-instrumented: dummy-instrumented-debug.exe
-	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) gdb dummy-instrumented-debug.exe
