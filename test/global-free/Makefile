@@ -70,6 +70,9 @@ dummy-instrumented-debug.exe: instrumented.ll
 run-dummy-instrumented-debug: dummy-instrumented-debug.exe
 	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./dummy-instrumented-debug.exe
 
+dummy-instrumented-release.dump: dummy-instrumented-release.exe
+	objdump -D dummy-instrumented-release.exe > dummy-instrumented-release.dump
+
 dummy-instrumented-release.exe: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_dummy.a) instrumented.ll -o dummy-instrumented-release.exe
 
