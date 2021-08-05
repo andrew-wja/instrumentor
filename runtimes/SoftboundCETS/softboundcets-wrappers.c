@@ -516,13 +516,15 @@ __WEAK_INLINE__ void*
 softboundcets_realloc(void* ptr, size_t size) {
    void* ret_ptr = realloc(ptr, size);
    __softboundcets_allocation_secondary_trie_allocate(ret_ptr);
-   size_t ptr_key = 1;
-   void* ptr_lock = __softboundcets_global_lock;
-   ptr_key = __softboundcets_load_key_shadow_stack(1);
-   ptr_lock = __softboundcets_load_lock_shadow_stack(1);
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+  __softboundcets_store_dontcare_return_metadata();
+#else
+   size_t ptr_key = __softboundcets_load_key_shadow_stack(1);
+   void* ptr_lock = __softboundcets_load_lock_shadow_stack(1);
    __softboundcets_store_return_metadata(ret_ptr,
                                          (char*)(ret_ptr) + size,
                                          ptr_key, ptr_lock);
+#endif
    if(ret_ptr != ptr){
      __softboundcets_metadata_copy(ret_ptr, ptr, size);
    }
@@ -537,9 +539,13 @@ softboundcets_calloc(size_t nmemb, size_t size) {
  void* ret_ptr = calloc(nmemb, size);
  if(ret_ptr != NULL) {
    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+  __softboundcets_store_dontcare_return_metadata();
+#else
    __softboundcets_store_return_metadata(ret_ptr,
                                          ((char*)(ret_ptr) + (nmemb * size)),
                                          ptr_key, ptr_lock);
+#endif
  } else {
    __softboundcets_store_null_return_metadata();
  }
@@ -573,9 +579,13 @@ softboundcets_malloc(size_t size) {
     lock_type ptr_lock=NULL;
     __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+  __softboundcets_store_dontcare_return_metadata();
+#else
     char* ret_bound = ret_ptr + size;
     __softboundcets_store_return_metadata(ret_ptr, ret_bound,
                                           ptr_key, ptr_lock);
+#endif
   }
   return ret_ptr;
 }

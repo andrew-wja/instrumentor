@@ -49,6 +49,9 @@ bench-test: dist/runtimes/release
 debug-test: dist/runtimes/debug
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-instrumented-debug; done
 
+debug-bench-test: dist/runtimes/debug
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x bench-instrumented-debug.dump run-bench-instrumented-debug; done
+
 
 dist-clean:
 	rm -rf dist*

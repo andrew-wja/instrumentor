@@ -51,7 +51,7 @@ __softboundcets_spatial_load_dereference_check(void *base,
                                                void *ptr,
                                                size_t size_of_type) {
   if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
-    __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
+    __softboundcets_printf("[spatial_load_dereference_check] base=%p, bound=%p, ptr=%p\n",
                            base, bound, ptr);
     if (ptr < base) {
       __softboundcets_abort_reason("read through pointer out of bounds below object base address");
@@ -62,7 +62,7 @@ __softboundcets_spatial_load_dereference_check(void *base,
   }
 
 #if defined(SOFTBOUNDCETS_DEBUG)
-  __softboundcets_printf("[spatial_load_dereference_check] base=%zx, bound=%zx, ptr=%zx\n",
+  __softboundcets_printf("[spatial_load_dereference_check] base=%p, bound=%p, ptr=%p\n",
                          base, bound, ptr);
 #endif
   return;
@@ -165,12 +165,18 @@ __softboundcets_destroy_stack_key(size_t key){
 
 __WEAK_INLINE__ void
 __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
+  size_t temp_id;
 
-  size_t temp_id = __softboundcets_key_id_counter++;
-
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+  *((size_t**) ptr_lock) = __softboundcets_global_lock;
+  temp_id = **((size_t**) ptr_lock);
+  *((size_t*) ptr_key) = temp_id;
+#else
+  temp_id = __softboundcets_key_id_counter++;
   *((size_t**) ptr_lock) = (size_t*)__softboundcets_allocate_lock_location();
   *((size_t*) ptr_key) = temp_id;
   **((size_t**) ptr_lock) = temp_id;
+#endif
 
   __softboundcets_allocation_secondary_trie_allocate(ptr);
 
@@ -196,6 +202,8 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
       __softboundcets_abort_reason("double free");
     }
 
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+#else
     if (ptr_lock == (void*)__softboundcets_global_lock) {
       __softboundcets_abort_reason("deallocating global variable");
     }
@@ -203,6 +211,7 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
     *((size_t*)ptr_lock) = 0;
     *((void**) ptr_lock) = __softboundcets_lock_next_location;
     __softboundcets_lock_next_location = ptr_lock;
+#endif
     return;
   } else {
 #if defined(SOFTBOUNDCETS_DEBUG)

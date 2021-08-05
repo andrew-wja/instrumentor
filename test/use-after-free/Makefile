@@ -68,6 +68,9 @@ bench-instrumented.ll: test.ll
 	cp test.ll bench-instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor --blacklist $(realpath ../../dist/runtimes/release/blacklist.SoftboundCETS) --benchmark --checks --register-metadata --stack --load --store --call --bitcast bench-instrumented.ll
 
+bench-instrumented-debug.dump: bench-instrumented-debug.exe
+	objdump -D bench-instrumented-debug.exe > bench-instrumented-debug.dump
+
 bench-instrumented-debug.exe: bench-instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_bench.a) bench-instrumented.ll -o bench-instrumented-debug.exe
 

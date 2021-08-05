@@ -236,8 +236,16 @@ inspect p
           tell ["inspect: in function " ++ (show fname) ++ ": no local storage allocated for metadata for pointer " ++ pp]
           return Nothing
 
-  | (ConstantOperand (Const.Null (PointerType ty _))) <- p = gets (Just . (ty,) . fromJust . nullMetadata)
-  | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = gets (Just . (ty,) . fromJust . nullMetadata)
+  | (ConstantOperand (Const.Null (PointerType ty _))) <- p = do
+      shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
+      if shouldUseDontCareMetadata
+      then gets (Just . (ty,) . fromJust . dontCareMetadata)
+      else gets (Just . (ty,) . fromJust . nullMetadata)
+  | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = do
+      shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
+      if shouldUseDontCareMetadata
+      then gets (Just . (ty,) . fromJust . dontCareMetadata)
+      else gets (Just . (ty,) . fromJust . nullMetadata)
   | (ConstantOperand (Const.GlobalReference (PointerType ty _) _)) <- p = do
       present <- gets (Data.Map.member p . localMetadata)
       if present
