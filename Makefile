@@ -63,7 +63,7 @@ llvm-clean:
 runtimes-clean:
 	${MAKE} -C ./runtimes clean
 
-clean: dist-clean test-clean
+clean: dist-clean test-clean runtimes-clean
 	stack clean
 
 really-clean: clean
