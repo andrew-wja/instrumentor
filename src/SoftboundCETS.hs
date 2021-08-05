@@ -83,6 +83,8 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ Metadata for null pointers.
                                , dontCareMetadataRegs :: Maybe (Operand, Operand, Operand, Operand)
                                -- ^ Metadata that can never cause any runtime checks to fail (in registers).
+                               , nullMetadataRegs :: Maybe (Operand, Operand, Operand, Operand)
+                               -- ^ Metadata for null pointers (in registers).
                                , localMetadata :: Map Operand LocalMetadata
                                -- ^ A 'Map' from pointer 'Operand's in the current function to their metadata.
                                , baseRegisterMetadata :: Map Operand Operand
@@ -104,7 +106,7 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing Data.Set.empty
                                Data.Map.empty Data.Set.empty
-                               Nothing Nothing Nothing
+                               Nothing Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
 
@@ -620,6 +622,44 @@ populateLocalMetadataForGlobal g = do
     gen g' (base', bound', key', lock') -- We just generated these registers
     return ()
 
+generateDCMetadata :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
+generateDCMetadata = do
+  dcBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.base")
+  dcBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.bound")
+  dcKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.dc.key")
+  dcLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.lock")
+  let dcMetaBase = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  store (dcBasePtr) 8 dcMetaBase
+  pointerBits <- gets (CLI.pointerWidth . options)
+  let dcMetaBound = ConstantOperand $ Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
+  store (dcBoundPtr) 8 dcMetaBound
+  let dcMetaKey = ConstantOperand $ Const.Int 64 1
+  store (dcKeyPtr) 8 dcMetaKey
+  glp <- gets (fromJust . globalLockPtr)
+  dcMetaLock <- load glp 0
+  store (dcLockPtr) 8 dcMetaLock
+  let meta = Local dcBasePtr dcBoundPtr dcKeyPtr dcLockPtr
+  let regs = (dcMetaBase, dcMetaBound, dcMetaKey, dcMetaLock)
+  return (meta, regs)
+
+generateNullMetadata :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
+generateNullMetadata = do
+  nullBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
+  nullBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
+  nullKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
+  nullLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
+  let nullMetaBase = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  store (nullBasePtr) 8 nullMetaBase
+  let nullMetaBound = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  store (nullBoundPtr) 8 nullMetaBound
+  let nullMetaKey = ConstantOperand $ Const.Int 64 0
+  store (nullKeyPtr) 8 nullMetaKey
+  let nullMetaLock = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  store (nullLockPtr) 8 nullMetaLock
+  let meta = Local nullBasePtr nullBoundPtr nullKeyPtr nullLockPtr
+  let regs = (nullMetaBase, nullMetaBound, nullMetaKey, nullMetaLock)
+  return (meta, regs)
+
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
 instrument blacklist' opts m = do
@@ -670,17 +710,29 @@ instrument blacklist' opts m = do
             (Left s) -> error $ "instrumentGlobalVariable: could not compute type of initializer (" ++ s ++ ")"
             (Right gType') -> do
               let gConst = Const.GlobalReference (ptr gType') gName
-              let baseConst = if Helpers.isPointerType gType'
-                              then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 0]) (ptr i8)
-                              else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 0]) (ptr i8)
-              let boundConst = if Helpers.isPointerType gType'
-                              then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 1]) (ptr i8)
-                              else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 1]) (ptr i8)
-              let keyConst = Const.Int 64 1
-              let gMeta = Global baseConst boundConst keyConst
-              let gPtr = ConstantOperand gConst
-              modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
-              mark gPtr Safe -- The address of a global variable is always safe
+              shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
+              if shouldUseDontCareMetadata
+              then do
+                let baseConst = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+                pointerBits <- gets (CLI.pointerWidth . options)
+                let boundConst = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
+                let keyConst = Const.Int 64 1
+                let gMeta = Global baseConst boundConst keyConst
+                let gPtr = ConstantOperand gConst
+                modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
+                mark gPtr Safe -- The address of a global variable is always safe
+              else do
+                let baseConst = if Helpers.isPointerType gType'
+                                then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 0]) (ptr i8)
+                                else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 0]) (ptr i8)
+                let boundConst = if Helpers.isPointerType gType'
+                                then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 1]) (ptr i8)
+                                else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 1]) (ptr i8)
+                let keyConst = Const.Int 64 1
+                let gMeta = Global baseConst boundConst keyConst
+                let gPtr = ConstantOperand gConst
+                modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
+                mark gPtr Safe -- The address of a global variable is always safe
       | otherwise = do
         pg <- pure $ show g
         error $ "instrumentGlobalVariable: expected global variable, but got: " ++ pg
@@ -699,6 +751,7 @@ instrument blacklist' opts m = do
                              , dontCareMetadata = Nothing
                              , nullMetadata = Nothing
                              , dontCareMetadataRegs = Nothing
+                             , nullMetadataRegs = Nothing
                              , localMetadata = Data.Map.empty
                              , baseRegisterMetadata = Data.Map.empty
                              , boundRegisterMetadata = Data.Map.empty
@@ -722,36 +775,6 @@ instrument blacklist' opts m = do
               emitBlockStart (mkName "sbcets_metadata_init")
               mapM_ allocateLocalMetadataStorage pointerArguments
               _ <- zipWithM emitMetadataLoadFromShadowStack pointerArguments shadowStackIndices
-              -- Create the don't-care metadata. The runtime returns this metadata for address 0.
-              -- The don't-care metadata is platform-dependent, which is why the runtime does this.
-              nullPtr <- inttoptr (int64 0) (ptr i8)
-              dcMetadata <- allocateLocalMetadataStorage nullPtr
-              _ <- emitRuntimeMetadataLoad nullPtr nullPtr
-              modify $ \s -> s { dontCareMetadata = Just dcMetadata }
-              -- Load the don't-care metadata into registers for reuse if reuseRegisters is set
-              useRegMeta <- gets (CLI.reuseRegisters . options)
-              when useRegMeta $ do
-                dcMetaBase <- load (base dcMetadata) 0
-                dcMetaBound <- load (bound dcMetadata) 0
-                dcMetaKey <- load (key dcMetadata) 0
-                dcMetaLock <- load (lock dcMetadata) 0
-                modify $ \s -> s { dontCareMetadataRegs = Just (dcMetaBase, dcMetaBound, dcMetaKey, dcMetaLock) }
-              -- Create the null pointer metadata. The null pointer metadata is not platform dependent.
-              nullMetaBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
-              nullMetaBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
-              nullMetaKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
-              nullMetaLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
-              modify $ \s -> s { nullMetadata = Just $ Local nullMetaBasePtr nullMetaBoundPtr nullMetaKeyPtr nullMetaLockPtr }
-              -- Initialize the null pointer metadata
-              nullMeta <- gets (fromJust . nullMetadata)
-              let nullMetaBase = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
-              store (base nullMeta) 8 nullMetaBase
-              let nullMetaBound = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
-              store (bound nullMeta) 8 nullMetaBound
-              let nullMetaKey = ConstantOperand $ Const.Int 64 0
-              store (key nullMeta) 8 nullMetaKey
-              let nullMetaLock = ConstantOperand $ Const.IntToPtr (Const.Int 64 0) (ptr i8)
-              store (lock nullMeta) 8 nullMetaLock
               -- Collect all metadata allocation sites so we can allocate local variables for metadata ahead of time
               pointersRequiringLocalMetadata <- liftM (Data.Set.fromList . map Helpers.walk . concat) $ mapM identifyLocalMetadataAllocations $ basicBlocks f
               mapM_ allocateLocalMetadataStorage $ filter (not . flip elem pointerArguments) $ Data.Set.toList pointersRequiringLocalMetadata
@@ -777,6 +800,17 @@ instrument blacklist' opts m = do
       glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.global_lock")
       store glp 8 gl
       modify $ \s -> s { globalLockPtr = Just glp }
+      -- Create the don't-care metadata (uses the global lock pointer)
+      (dcMeta, dcMetaRegs) <- generateDCMetadata
+      modify $ \s -> s { dontCareMetadata = Just dcMeta }
+      useRegMeta <- gets (CLI.reuseRegisters . options)
+      when useRegMeta $ do
+        modify $ \s -> s { dontCareMetadataRegs = Just dcMetaRegs }
+      -- Create the null pointer metadata
+      (nullMeta, nullMetaRegs) <- generateNullMetadata
+      modify $ \s -> s { nullMetadata = Just nullMeta }
+      when useRegMeta $ do
+        modify $ \s -> s { nullMetadataRegs = Just nullMetaRegs }
       -- Create a lock for local allocations
       emitLocalKeyAndLockCreation
       -- Populate the local metadata for global variables used in the function
@@ -808,31 +842,49 @@ instrument blacklist' opts m = do
           mark resultPtr Safe
           enable <- gets (CLI.instrumentStack . options)
           when enable $ do
-            eltSize <- sizeof 64 ty
-            intCount <- if isJust count
-                        then do
-                          tc <- typeOf $ fromJust count
-                          case tc of
-                            (Left s) -> do
-                              pFunc <- gets (show . name . fromJust . currentFunction)
-                              pInst <- pure $ show i
-                              error $ "instrumentInst: in function "++ pFunc ++ ": could not compute type of alloca count parameter in " ++ pInst ++ " (" ++ s ++ ")"
-                            (Right tc') -> do
-                              if not (tc' == i64)
-                              then sext (fromJust count) i64
-                              else pure $ fromJust count
-                        else pure $ ConstantOperand $ Const.Int 64 1
-            allocSize <- mul eltSize intCount
-            baseReg <- bitcast resultPtr (ptr i8)
-            intBase <- ptrtoint baseReg i64
-            intBound <- add allocSize intBase
-            boundReg <- inttoptr intBound (ptr i8)
-            functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
-            functionLockPtr <- gets (fromJust . localStackFrameLockPtr)
-            keyReg <- load functionKeyPtr 0
-            lockReg <- load functionLockPtr 0
-            _ <- emitMetadataStoreToLocalVariables resultPtr (baseReg, boundReg, keyReg, lockReg)
-            return ()
+            shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
+            if shouldUseDontCareMetadata
+            then do
+              dcMeta <- gets (fromJust . dontCareMetadata)
+              useRegMeta <- gets (CLI.reuseRegisters . options)
+              (baseReg, boundReg, keyReg, lockReg) <-
+                if useRegMeta
+                then do
+                  gets (fromJust . dontCareMetadataRegs)
+                else do
+                  baseReg <- load (base dcMeta) 0
+                  boundReg <- load (bound dcMeta) 0
+                  keyReg <- load (key dcMeta) 0
+                  lockReg <- load (lock dcMeta) 0
+                  return (baseReg, boundReg, keyReg, lockReg)
+              _ <- emitMetadataStoreToLocalVariables resultPtr (baseReg, boundReg, keyReg, lockReg)
+              return ()
+            else do
+              eltSize <- sizeof 64 ty
+              intCount <- if isJust count
+                          then do
+                            tc <- typeOf $ fromJust count
+                            case tc of
+                              (Left s) -> do
+                                pFunc <- gets (show . name . fromJust . currentFunction)
+                                pInst <- pure $ show i
+                                error $ "instrumentInst: in function "++ pFunc ++ ": could not compute type of alloca count parameter in " ++ pInst ++ " (" ++ s ++ ")"
+                              (Right tc') -> do
+                                if not (tc' == i64)
+                                then sext (fromJust count) i64
+                                else pure $ fromJust count
+                          else pure $ ConstantOperand $ Const.Int 64 1
+              allocSize <- mul eltSize intCount
+              baseReg <- bitcast resultPtr (ptr i8)
+              intBase <- ptrtoint baseReg i64
+              intBound <- add allocSize intBase
+              boundReg <- inttoptr intBound (ptr i8)
+              functionKeyPtr <- gets (fromJust . localStackFrameKeyPtr)
+              functionLockPtr <- gets (fromJust . localStackFrameLockPtr)
+              keyReg <- load functionKeyPtr 0
+              lockReg <- load functionLockPtr 0
+              _ <- emitMetadataStoreToLocalVariables resultPtr (baseReg, boundReg, keyReg, lockReg)
+              return ()
 
       | (Load _ addr _ _ _) <- o = do
         enable <- gets (CLI.instrumentLoad . options)

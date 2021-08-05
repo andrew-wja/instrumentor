@@ -287,8 +287,10 @@ __softboundcets_metadata_copy(void* dest, void* from, size_t size) {
   size_t dest_secondary_index = ((dest_ptr>> 3) & 0x3fffff);
   size_t from_secondary_index = ((from_ptr>> 3) & 0x3fffff);
 
+#if defined(SOFTBOUNDCETS_DEBUG)
   assert(dest_secondary_index < __SOFTBOUNDCETS_TRIE_SECONDARY_TABLE_ENTRIES);
   assert(from_secondary_index < __SOFTBOUNDCETS_TRIE_SECONDARY_TABLE_ENTRIES);
+#endif
 
   void* dest_entry_ptr = &trie_secondary_table_dest_begin[dest_secondary_index];
   void* from_entry_ptr = &trie_secondary_table_from_begin[from_secondary_index];

@@ -565,13 +565,12 @@ softboundcets_mmap(void* addr, size_t length,
 
 __WEAK_INLINE__ void*
 softboundcets_malloc(size_t size) {
-  key_type ptr_key=1;
-  lock_type ptr_lock=NULL;
-
   char* ret_ptr = (char*)malloc(size);
   if(ret_ptr == NULL){
     __softboundcets_store_null_return_metadata();
   } else {
+    key_type ptr_key=1;
+    lock_type ptr_lock=NULL;
     __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
     char* ret_bound = ret_ptr + size;

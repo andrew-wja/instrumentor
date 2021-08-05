@@ -18,6 +18,8 @@ data Options = Options { instrumentLoad :: Bool -- ^ Whether to instrument load 
                        , emitChecks :: Bool -- ^ Whether to emit runtime metadata validity checks
                        , instrumentStack :: Bool -- ^ Whether to instrument stack allocations
                        , reuseRegisters :: Bool -- ^ Whether to reuse metadata in registers
+                       , benchmarkMode :: Bool -- ^ Whether to generate "benchmarking" mode metadata (i.e. all metadata is don't-care)
+                       , pointerWidth :: Int -- ^ The effective width of a pointer in bits
                        , file :: String -- ^ The path to the input module for instrumentation
                        , blacklist :: String -- ^ Function symbols in the blacklist will not be instrumented
                        }
@@ -30,6 +32,8 @@ defaultOptions = Options { instrumentLoad = False
                          , emitChecks = False
                          , instrumentStack = False
                          , reuseRegisters = False
+                         , benchmarkMode = False
+                         , pointerWidth = 48
                          , file = ""
                          , blacklist = ""
                          }
@@ -57,6 +61,14 @@ optParser = Options
   <*> switch
       ( long "register-metadata"
       <> help "Reuse metadata in registers if possible" )
+  <*> switch
+      ( long "benchmark"
+      <> help "Enable benchmarking mode where all metadata is don't-care" )
+  <*> option auto
+      ( long "pointer-width"
+      <> help "Assume the width of a pointer is this number of bits"
+      <> showDefault
+      <> value 48 )
   <*> argument str
       ( metavar "FILE"
       <> help "LLVM module to instrument" )

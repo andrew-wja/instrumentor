@@ -43,8 +43,8 @@ dist/doc:
 test: dist/runtimes/release
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x instrumented-release.dump run-instrumented-release; done
 
-dummy-test: dist/runtimes/release
-	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x dummy-instrumented-release.dump run-dummy-instrumented-release; done
+bench-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x bench-instrumented-release.dump run-bench-instrumented-release; done
 
 debug-test: dist/runtimes/debug
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-instrumented-debug; done

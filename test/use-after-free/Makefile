@@ -1,6 +1,6 @@
 .PHONY: all tools clean
 
-all: tools test instrumented dummy-instrumented
+all: tools test instrumented bench-instrumented
 
 tools:
 	$(MAKE) -C ../../ dist/instrumentor dist/runtimes/release
@@ -63,18 +63,22 @@ run-instrumented-debug: instrumented-debug.exe
 	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./instrumented-debug.exe
 
 
-# Instrumented version of the test program linked with a dummy runtime that does no checking (for debugging purposes)
-dummy-instrumented-debug.exe: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_dummy.a) instrumented.ll -o dummy-instrumented-debug.exe
+# Instrumented version of the test program for benchmarking
+bench-instrumented.ll: test.ll
+	cp test.ll bench-instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor --blacklist $(realpath ../../dist/runtimes/release/blacklist.SoftboundCETS) --benchmark --checks --register-metadata --stack --load --store --call --bitcast bench-instrumented.ll
 
-run-dummy-instrumented-debug: dummy-instrumented-debug.exe
-	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./dummy-instrumented-debug.exe
+bench-instrumented-debug.exe: bench-instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_bench.a) bench-instrumented.ll -o bench-instrumented-debug.exe
 
-dummy-instrumented-release.dump: dummy-instrumented-release.exe
-	objdump -D dummy-instrumented-release.exe > dummy-instrumented-release.dump
+run-bench-instrumented-debug: bench-instrumented-debug.exe
+	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./bench-instrumented-debug.exe
 
-dummy-instrumented-release.exe: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_dummy.a) instrumented.ll -o dummy-instrumented-release.exe
+bench-instrumented-release.dump: bench-instrumented-release.exe
+	objdump -D bench-instrumented-release.exe > bench-instrumented-release.dump
 
-run-dummy-instrumented-release: dummy-instrumented-release.exe
-	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./dummy-instrumented-release.exe
+bench-instrumented-release.exe: bench-instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_bench.a) bench-instrumented.ll -o bench-instrumented-release.exe
+
+run-bench-instrumented-release: bench-instrumented-release.exe
+	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./bench-instrumented-release.exe
