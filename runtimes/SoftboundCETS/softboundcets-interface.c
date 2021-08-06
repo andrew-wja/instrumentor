@@ -50,6 +50,8 @@ __softboundcets_spatial_load_dereference_check(void *base,
                                                void *bound,
                                                void *ptr,
                                                size_t size_of_type) {
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if ((ptr < base) || ((void*)((char*) ptr + size_of_type) > bound)) {
     __softboundcets_printf("[spatial_load_dereference_check] base=%p, bound=%p, ptr=%p\n",
                            base, bound, ptr);
@@ -60,6 +62,7 @@ __softboundcets_spatial_load_dereference_check(void *base,
       __softboundcets_abort_reason("read through pointer out of bounds above object bound address");
     }
   }
+#endif
 
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[spatial_load_dereference_check] base=%p, bound=%p, ptr=%p\n",
@@ -73,6 +76,8 @@ __softboundcets_spatial_store_dereference_check(void *base,
                                                 void *bound,
                                                 void *ptr,
                                                 size_t size_of_type) {
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if ((ptr < base) || ((void*)((char*)ptr + size_of_type) > bound)) {
     __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
                            base, bound, ptr, size_of_type, (char*)ptr+size_of_type);
@@ -83,6 +88,7 @@ __softboundcets_spatial_store_dereference_check(void *base,
       __softboundcets_abort_reason("write through pointer out of bounds above object bound address");
     }
   }
+#endif
 
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[spatial_store_dereference_check] base=%p, bound=%p, ptr=%p, size_of_type=%zx, ptr+size=%p\n",
@@ -94,6 +100,8 @@ __softboundcets_spatial_store_dereference_check(void *base,
 __WEAK_INLINE__ void
 __softboundcets_temporal_load_dereference_check(void* pointer_lock,
                                                 size_t key) {
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if (pointer_lock != NULL) {
     size_t temp = *((size_t*)pointer_lock);
 
@@ -107,6 +115,7 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
                              key, pointer_lock);
     __softboundcets_abort_reason("null pointer dereference");
   }
+#endif
 
 #if defined(SOFTBOUNDCETS_DEBUG)
 __softboundcets_printf("[temporal_load_dereference_check] key=%zx, lock=%p, next_ptr=%zx\n",
@@ -118,6 +127,8 @@ __softboundcets_printf("[temporal_load_dereference_check] key=%zx, lock=%p, next
 __WEAK_INLINE__ void
 __softboundcets_temporal_store_dereference_check(void* pointer_lock,
                                                  size_t key) {
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if (pointer_lock != NULL) {
     size_t temp = *((size_t*)pointer_lock);
 
@@ -131,6 +142,7 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
                              key, pointer_lock);
     __softboundcets_abort_reason("null pointer dereference");
   }
+#endif
 
 #if defined(SOFTBOUNDCETS_DEBUG)
 __softboundcets_printf("[temporal_store_dereference_check] key=%zx, lock=%p\n",
@@ -150,10 +162,13 @@ __softboundcets_destroy_stack_key(size_t key){
 
   size_t *lock = (size_t *) __softboundcets_stack_key_table_ptr;
 
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if (*lock != key) {
     __softboundcets_printf("[destroy_stack_key] destroying stack key %zx in function with stack key %zx\n", key, *lock);
     __softboundcets_abort_reason("control flow anomaly");
   }
+#endif
 
   *(lock) = 0;
 
@@ -194,6 +209,9 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
     __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                            ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
+
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
     size_t temp = *((size_t*)ptr_lock);
 
     if(temp != key) {
@@ -201,8 +219,9 @@ __softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
                              key, temp, __softboundcets_lock_next_location);
       __softboundcets_abort_reason("double free");
     }
+#endif
 
-#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE) || defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
     if (ptr_lock == (void*)__softboundcets_global_lock) {
       __softboundcets_abort_reason("deallocating global variable");
@@ -228,6 +247,8 @@ __softboundcets_memcopy_check(void* dest, void* src, size_t size,
                               void* src_base, void* src_bound,
                               size_t dest_key, void* dest_lock,
                               size_t src_key, void* src_lock) {
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if(size >= LONG_MAX)
     __softboundcets_abort();
 
@@ -244,6 +265,8 @@ __softboundcets_memcopy_check(void* dest, void* src, size_t size,
   if(src_key != *((size_t*)(src_lock))){
     __softboundcets_abort();
   }
+#endif
+
   return;
 }
 
@@ -251,7 +274,8 @@ __WEAK_INLINE__ void
 __softboundcets_memset_check(void* dest, size_t size,
                              void* dest_base, void* dest_bound,
                              size_t dest_key, void* dest_lock){
-
+#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
+#else
   if(size >= LONG_MAX)
     __softboundcets_abort();
 
@@ -261,5 +285,7 @@ __softboundcets_memset_check(void* dest, size_t size,
   if(dest_key != *((size_t*)(dest_lock))){
     __softboundcets_abort();
   }
+#endif
+
   return;
 }

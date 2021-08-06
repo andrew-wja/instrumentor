@@ -29,7 +29,7 @@ run-test: test
 	./test
 
 debug-test: test
-	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) gdb test
+	gdb test
 
 
 # Instrumented version of the test program
@@ -57,10 +57,21 @@ instrumented-debug.exe: instrumented.ll
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/debug/lib/libSoftBoundCETS_full.a) instrumented.ll -o instrumented-debug.exe
 
 run-instrumented-release: instrumented-release.exe
-	LD_LIBRARY_PATH=$(realpath ../../runtimes-build/lib) ./instrumented-release.exe
+	./instrumented-release.exe
 
 run-instrumented-debug: instrumented-debug.exe
 	LD_LIBRARY_PATH=$(realpath ../../dist/runtimes/release) ./instrumented-debug.exe
+
+
+# Instrumented version of the test program with no-op checks for debugging
+nochecks-instrumented-release.dump: nochecks-instrumented-release.exe
+	objdump -D nochecks-instrumented-release.exe > nochecks-instrumented-release.dump
+
+nochecks-instrumented-release.exe: instrumented.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -fuse-ld=lld -flto $(realpath ../../dist/runtimes/release/lib/libSoftBoundCETS_nochecks.a) instrumented.ll -o nochecks-instrumented-release.exe
+
+run-nochecks-instrumented-release: nochecks-instrumented-release.exe
+	./nochecks-instrumented-release.exe
 
 
 # Instrumented version of the test program for benchmarking

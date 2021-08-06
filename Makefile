@@ -46,6 +46,9 @@ test: dist/runtimes/release
 bench-test: dist/runtimes/release
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x bench-instrumented-release.dump run-bench-instrumented-release; done
 
+nochecks-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x nochecks-instrumented-release.dump run-nochecks-instrumented-release; done
+
 debug-test: dist/runtimes/debug
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-instrumented-debug; done
 
