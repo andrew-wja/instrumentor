@@ -113,9 +113,11 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
       }
     }
   } else {
-    __softboundcets_printf("[temporal_load_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
-                             key, pointer_lock);
-    __softboundcets_abort_reason("null pointer dereference");
+    if (key != 0) { // 0 is the don't-care value
+      __softboundcets_printf("[temporal_load_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
+                               key, pointer_lock);
+      __softboundcets_abort_reason("null pointer dereference");
+    }
   }
 #endif
 

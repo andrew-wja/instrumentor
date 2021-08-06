@@ -286,11 +286,18 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
-    if(trie_secondary_table == NULL) {
+    if(trie_secondary_table == NULL) { // We don't have an entry for this pointer
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+      *((void**) base) = NULL;
+      *((void**) bound) = (void*)PTRDIFF_MAX;
+      *((size_t*) key ) = 0;
+      *((void**) lock) = (void*)1;
+#else
       *((void**) base) = NULL;
       *((void**) bound) = NULL;
       *((size_t*) key ) = 0;
       *((void**) lock) = NULL;
+#endif
       return;
     }
   }
