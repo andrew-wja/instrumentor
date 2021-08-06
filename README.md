@@ -35,15 +35,18 @@ Then to integrate `instrumentor` you would split the production of the object
 files into two parts to accomodate the instrumentation step as follows:
 
 ```
+# compile
 %.bc: %.c
     clang -emit-llvm -c -o $@ $< $(CFLAGS)
 
+# instrument
 %.instrumented.bc: %.bc
     cp $< $@
     instrumentor <options> $@
 
+# link
 %.o: %.instrumented.bc
-    clang -l<runtime>_full_rt $< -o $@
+    clang -fuse-ld=lld -flto <runtime>.a $< -o $@
 ```
 
 If you do not wish to install the runtimes and headers shipped with
@@ -66,19 +69,21 @@ code.
 
 `instrumentor` provides different versions of each runtime depending on what
 you would like to accomplish. If you want full checking of your program, you
-will need to link the `_full_rt.so` version of the runtime you wish to use. If
-you want to benchmark the performance of `instrumentor`, you can link against
-the `_dummy_rt.so` version of the runtime. This version does everything that
-the full version of the runtime does except that the checks which detect errors
-always succeed, so that no errors are reported. For benchmarking purposes, this
-is useful if you are trying to compare `instrumentor` to another tool that
-allows a program to continue execution even after errors are detected.
+will need to link the `_full.a` version of the runtime you wish to use.
 
-For embedded systems development, it is common to work with freestanding code
-which does not use standard libraries. The runtimes with the `_minimal` prefix
-are for this situation. These do not depend on standard library functionality,
-and do not provide instrumentation-aware wrappers for standard library
-functions.
+If you want to benchmark the performance of `instrumentor`, you can link
+against the `_bench.a` version of the runtime. This version does everything
+that the full version of the runtime does except that the checks which detect
+errors always succeed, so that no errors are reported. For benchmarking
+purposes, this is useful if you are trying to compare `instrumentor` to another
+tool that allows a program to continue execution even after errors are
+detected.
+
+If you would like to use a dry-run approach as a placeholder while you are
+working on integrating `instrumentor` with your build, you can use the
+`_nochecks.a` version of the runtime, which as the name suggests, does not
+actually perform any checks, and as such, will not change the behaviour of your
+program at execution time.
 
 ## Modifying and Extending `instrumentor`
 
