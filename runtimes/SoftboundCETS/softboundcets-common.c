@@ -279,14 +279,6 @@ __softboundcets_metadata_load(void* addr_of_ptr,
                               void** bound,
                               size_t* key,
                               void** lock) {
-
-#if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
-#else
-  if ((*((void**)addr_of_ptr)) == NULL) {
-    __softboundcets_abort_reason("null pointer lookup in runtime");
-  }
-#endif
-
   size_t ptr = (size_t) addr_of_ptr;
   __softboundcets_trie_entry_t* trie_secondary_table;
 

@@ -326,7 +326,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
   return (nub $ sort (isites ++ tsites))
   where
     instAllocations inst
-      -- Case 1: If a pointer is loaded from memory, local metadata is allocated for the pointer's metadata. Local metadata also needs allocating for the address if it is a global variable.
+      -- Case 1: If a pointer is loaded from memory, local metadata is allocated for the pointer's metadata. Local metadata also needs to be allocated for the load address.
       | (v := o) <- inst, (Load _ addr _ _ _) <- o = do
           enable <- gets (CLI.instrumentLoad . options)
           if enable
@@ -336,15 +336,15 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               (Left s) -> error $ "identifyLocalMetadataAllocations: failed to compute type of argument to instruction " ++ show o ++ " (" ++ s ++ ")"
               (Right ta') -> do
                 if (Helpers.isPointerType $ pointerReferent ta') &&
-                  (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta') -- TODO-IMPROVE: We don't currently instrument function pointers
+                   (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta') -- TODO-IMPROVE: We don't currently instrument function pointers
                 then do
-                  if Helpers.isConstantOperand addr
+                  if (Helpers.isConstantOperand addr) && (Helpers.isGlobalReference $ Helpers.walk addr)
                   then do
                     let addr' = Helpers.walk addr
                     modify $ \s -> s { currentFunctionGlobals = Data.Set.insert addr' $ currentFunctionGlobals s }
                     return [addr', LocalReference (pointerReferent ta') v]
-                  else return [LocalReference (pointerReferent ta') v]
-                else return []
+                  else return [addr, LocalReference (pointerReferent ta') v]
+                else return [addr]
           else return []
       -- Case 2: If a function is called and pointer arguments are passed, the metadata for those pointer arguments must be available in local variables.
       -- Additionally, if a pointer is returned, local variables must be allocated to hold the metadata for that pointer.
@@ -362,7 +362,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
                             filter (not . Helpers.isFunctionType . pointerReferent . fst) $ -- TODO-IMPROVE: We don't currently instrument function pointers
                             filter (Helpers.isPointerType . fst) $
                             zip (rights argTys) lrArgs
-              let globals = map Helpers.walk $ filter Helpers.isConstantOperand ptrArgs
+              let globals = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand ptrArgs
               modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList globals) $ currentFunctionGlobals s }
               return (ptrArgs ++ ptrRet)
             else do
@@ -374,7 +374,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
           if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
           then do
             let incomingV = map fst incoming
-            let incomingG = map Helpers.walk $ filter Helpers.isConstantOperand incomingV
+            let incomingG = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand incomingV
             modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
             return incomingV
           else return []
@@ -388,7 +388,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               if (Helpers.isPointerType selTy' && (not $ Helpers.isFunctionType $ pointerReferent selTy')) -- TODO-IMPROVE: We don't currently instrument function pointers
               then do
                 let incomingV = [tv, fv]
-                let incomingG = map Helpers.walk $ filter Helpers.isConstantOperand incomingV
+                let incomingG = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand incomingV
                 modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
                 return incomingV
               else return []
@@ -410,12 +410,32 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
                             filter (not . Helpers.isFunctionType . pointerReferent . fst) $ -- TODO-IMPROVE: We don't currently instrument function pointers
                             filter (Helpers.isPointerType . fst) $
                             zip (rights argTys) lrArgs
-              let globals = map Helpers.walk $ filter Helpers.isConstantOperand ptrArgs
+              let globals = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand ptrArgs
               modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList globals) $ currentFunctionGlobals s }
               return ptrArgs
             else do
               let s = head $ lefts argTys
               error $ "identifyLocalMetadataAllocations: failed to compute type of function parameter (" ++ s ++ ")"
+          else return []
+      -- Case 7: Local metadata needs to be available for the target of a store instruction (and the source if it is a pointer)
+      | (Do o) <- inst, (Store _ tgt src _ _ _) <- o = do
+          enable <- gets (CLI.instrumentStore . options)
+          if enable
+          then do
+            ta <- typeOf tgt
+            case ta of
+              (Left s) -> error $ "identifyLocalMetadataAllocations: failed to compute type of argument to instruction " ++ show o ++ " (" ++ s ++ ")"
+              (Right ta') -> do
+                if (Helpers.isPointerType $ pointerReferent ta') &&
+                   (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta') -- TODO-IMPROVE: We don't currently instrument function pointers
+                then do
+                  if (Helpers.isConstantOperand src) && (Helpers.isGlobalReference $ Helpers.walk src)
+                  then do
+                    let src' = Helpers.walk src
+                    modify $ \s -> s { currentFunctionGlobals = Data.Set.insert src' $ currentFunctionGlobals s }
+                    return [src', tgt]
+                  else return [src, tgt]
+                else return [tgt]
           else return []
       | otherwise = return []
 
@@ -429,7 +449,7 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               if (Helpers.isPointerType tx') &&
                  (not $ Helpers.isFunctionType $ pointerReferent tx') -- TODO-IMPROVE: We don't currently instrument function pointers
               then do
-                if Helpers.isConstantOperand x
+                if (Helpers.isConstantOperand x) && (Helpers.isGlobalReference $ Helpers.walk x)
                 then do
                   let x' = Helpers.walk x
                   modify $ \s -> s { currentFunctionGlobals = Data.Set.insert x' $ currentFunctionGlobals s }
@@ -641,10 +661,9 @@ generateDCMetadata = do
   pointerBits <- gets (CLI.pointerWidth . options)
   let dcMetaBound = ConstantOperand $ Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
   store (dcBoundPtr) 8 dcMetaBound
-  let dcMetaKey = ConstantOperand $ Const.Int 64 1
+  let dcMetaKey = ConstantOperand $ Const.Int 64 0
   store (dcKeyPtr) 8 dcMetaKey
-  glp <- gets (fromJust . globalLockPtr)
-  dcMetaLock <- load glp 0
+  let dcMetaLock = ConstantOperand $ Const.IntToPtr (Const.Int 64 1) (ptr i8)
   store (dcLockPtr) 8 dcMetaLock
   let meta = Local dcBasePtr dcBoundPtr dcKeyPtr dcLockPtr
   let regs = (dcMetaBase, dcMetaBound, dcMetaKey, dcMetaLock)
@@ -724,7 +743,7 @@ instrument blacklist' opts m = do
                 let baseConst = Const.IntToPtr (Const.Int 64 0) (ptr i8)
                 pointerBits <- gets (CLI.pointerWidth . options)
                 let boundConst = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
-                let keyConst = Const.Int 64 1
+                let keyConst = Const.Int 64 0
                 let gMeta = Global baseConst boundConst keyConst
                 let gPtr = ConstantOperand gConst
                 modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
@@ -843,7 +862,7 @@ instrument blacklist' opts m = do
     instrumentInst i@(v := o)
       | (Alloca ty count _ _) <- o = do
         -- We emit the alloca first because we reference the result in the instrumentation
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
         when (not $ Helpers.isFunctionType ty) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
           let resultPtr = LocalReference (ptr ty) v
             -- The address of a stack allocation is always safe
@@ -951,7 +970,7 @@ instrument blacklist' opts m = do
                 return ()
             Safe -> return ()
 
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
 
         when enable $ do -- No matter if we were able to instrument the load or not, if a pointer was loaded, ask the runtime for metadata for the loaded address.
           ta <- typeOf addr
@@ -973,7 +992,7 @@ instrument blacklist' opts m = do
         enable <- gets (CLI.instrumentCall . options)
         ignore <- isIgnoredFunction fname
         if (not enable || ignore)
-        then Helpers.emitNamedInst i
+        then Helpers.emitNamedInstStripMeta ["tbaa"] i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -991,8 +1010,8 @@ instrument blacklist' opts m = do
                 if hasWrapper
                 then do
                   wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
-                  Helpers.emitNamedInst $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
-                else Helpers.emitNamedInst i
+                  Helpers.emitNamedInstStripMeta ["tbaa"] $ v := (Helpers.rewriteCalledFunctionName wrapperFunctionName o)
+                else Helpers.emitNamedInstStripMeta ["tbaa"] i
                 -- TODO-OPTIMIZE: The function could potentially deallocate any pointer it is passed
                 mapM_ (flip mark $ Unsafe) $ Data.Set.fromList ptrArgs
                 mapM_ killLock $ Data.Set.fromList ptrArgs
@@ -1010,7 +1029,7 @@ instrument blacklist' opts m = do
                 pInst <- pure $ show i
                 error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of function argument in " ++ pInst ++ " (" ++ s ++ ")"
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
-              Helpers.emitNamedInst i
+              Helpers.emitNamedInstStripMeta ["tbaa"] i
 
       | (GetElementPtr _ addr ixs _) <- o = do
         ta <- typeOf addr
@@ -1052,7 +1071,7 @@ instrument blacklist' opts m = do
                   lockReg <- reload lockRegisterMetadata (lock meta') addr
                   gen gepResultPtr (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                   mark gepResultPtr Unsafe -- TODO-OPTIMIZE: arithmetic derived pointers are considered unconditionally unsafe (even if the parent pointer is safe)
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
 
       | (BitCast addr pty@(PointerType {}) _) <- o = do
         enable <- gets (CLI.instrumentBitcast . options)
@@ -1079,10 +1098,10 @@ instrument blacklist' opts m = do
             lockReg <- reload lockRegisterMetadata (lock meta') addr
             gen bitcastResultPtr (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
             mark bitcastResultPtr Unsafe -- TODO-OPTIMIZE: cast pointers are considered unconditionally unsafe (even if the parent pointer is safe)
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
 
       | (Select cond tval fval _) <- o = do
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
         selTy <- typeOf tval
         case selTy of
           (Left s) -> do
@@ -1131,7 +1150,7 @@ instrument blacklist' opts m = do
               return ()
 
       | (Phi (PointerType ty _) incoming _) <- o = do
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
 
         let phiMeta (p, n) = do meta <- inspect p
                                 if isNothing meta
@@ -1157,7 +1176,7 @@ instrument blacklist' opts m = do
           kill resultPtr
           return ()
 
-      | otherwise = Helpers.emitNamedInst i
+      | otherwise = Helpers.emitNamedInstStripMeta ["tbaa"] i
 
     instrumentInst i@(Do o)
       -- This alternative is the non-capturing variant (call ignoring return value, if any).
@@ -1166,7 +1185,7 @@ instrument blacklist' opts m = do
         enable <- gets (CLI.instrumentCall . options)
         ignore <- isIgnoredFunction fname
         if (not enable || ignore)
-        then Helpers.emitNamedInst i
+        then Helpers.emitNamedInstStripMeta ["tbaa"] i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -1184,8 +1203,8 @@ instrument blacklist' opts m = do
                 if hasWrapper
                 then do
                   wrapperFunctionName <- gets (fst . (! fname) . stdlibWrapperPrototypes)
-                  Helpers.emitNamedInst $ Do $ Helpers.rewriteCalledFunctionName wrapperFunctionName o
-                else Helpers.emitNamedInst i
+                  Helpers.emitNamedInstStripMeta ["tbaa"] $ Do $ Helpers.rewriteCalledFunctionName wrapperFunctionName o
+                else Helpers.emitNamedInstStripMeta ["tbaa"] i
                 -- The function could potentially deallocate any pointer it is passed
                 mapM_ (flip mark $ Unsafe) $ Data.Set.fromList ptrArgs
                 mapM_ killLock $ Data.Set.fromList ptrArgs
@@ -1196,7 +1215,7 @@ instrument blacklist' opts m = do
                 pInst <- pure $ show i
                 error $ "instrumentInst: in function " ++ pFunc ++ ": could not compute type of function argument in " ++ pInst ++ " (" ++ s ++ ")"
             (UnName {}) -> do -- TODO-IMPROVE: Calling a computed function pointer. Can we map this to a function symbol?
-              Helpers.emitNamedInst i
+              Helpers.emitNamedInstStripMeta ["tbaa"] i
 
       | (Store _ tgt src _ _ _) <- o = do
         enable <- gets (CLI.instrumentStore . options)
@@ -1210,7 +1229,7 @@ instrument blacklist' opts m = do
                 pAddr <- pure $ show tgt
                 pFunc <- gets (show . name . fromJust . currentFunction)
                 pInst <- pure $ show i
-                tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
+                tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented target pointer " ++ pAddr ++ " in " ++ pInst]
                 ta <- typeOf tgt
                 case ta of
                   (Left s) -> error $ "instrumentInst: could not compute type of argument to store instruction (" ++ s ++ ")"
@@ -1254,7 +1273,7 @@ instrument blacklist' opts m = do
                 return ()
             Safe -> return ()
 
-        Helpers.emitNamedInst i
+        Helpers.emitNamedInstStripMeta ["tbaa"] i
 
         when enable $ do
           ty <- typeOf src
@@ -1271,7 +1290,7 @@ instrument blacklist' opts m = do
                   pAddr <- pure $ show src
                   pFunc <- gets (show . name . fromJust . currentFunction)
                   pInst <- pure $ show i
-                  tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented pointer " ++ pAddr ++ " in " ++ pInst]
+                  tell ["in function " ++ pFunc ++ ": using don't-care metadata for uninstrumented source pointer " ++ pAddr ++ " in " ++ pInst]
                   dcMeta <- gets (fromJust . dontCareMetadata)
                   tgt' <- bitcast tgt (ptr i8)
                   useRegMeta <- gets (CLI.reuseRegisters . options)
@@ -1301,7 +1320,7 @@ instrument blacklist' opts m = do
                   gen src (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                   return ()
 
-      | otherwise = Helpers.emitNamedInst i
+      | otherwise = Helpers.emitNamedInstStripMeta ["tbaa"] i
 
     instrumentTerm i
       | (Do (Ret (Just op) _)) <- i = do

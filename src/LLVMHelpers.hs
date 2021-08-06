@@ -13,7 +13,7 @@ import Data.String (IsString(..))
 import Data.List (isInfixOf)
 import LLVM.AST
 import LLVM.AST.Constant
-import LLVM.AST.Global
+import LLVM.AST.Global hiding (metadata)
 import LLVM.IRBuilder.Monad
 import LLVM.IRBuilder.Internal.SnocList
 
@@ -38,6 +38,20 @@ emitNamedInst i
         { partialBlockInstrs = partialBlockInstrs bb `snoc` i }
   | (Do o) <- i = emitInstrVoid o
 
+-- | Helper function to strip specific metadata from an instruction
+stripMetadataWithKey :: String -> Named Instruction -> Named Instruction
+stripMetadataWithKey k i
+  | (v := o) <- i = v := (o { metadata = filter (not . (== (fromString k)) . fst) $ metadata o })
+  | (Do o) <- i   = Do (o { metadata = filter (not . (== (fromString k)) . fst) $ metadata o })
+
+-- | Code generation helper function
+emitNamedInstStripMeta :: MonadIRBuilder m => [String] -> Named Instruction -> m ()
+emitNamedInstStripMeta ks i
+  | (_ := _) <- i = do
+      modifyBlock $ \bb -> bb
+        { partialBlockInstrs = partialBlockInstrs bb `snoc` (foldr ($) i $ map stripMetadataWithKey ks) }
+  | (Do _) <- i = let (Do o) = foldr ($) i $ map stripMetadataWithKey ks in emitInstrVoid o
+
 -- | Helper function
 appendName :: Name -> String -> Name
 appendName (Name s) s' = Name (s <> fromString s')
@@ -52,6 +66,11 @@ isInfixOfName _ _ = False
 isConstantOperand :: Operand -> Bool
 isConstantOperand (ConstantOperand {}) = True
 isConstantOperand _ = False
+
+-- | Helper predicate.
+isGlobalReference :: Operand -> Bool
+isGlobalReference (ConstantOperand (GlobalReference {})) = True
+isGlobalReference _ = False
 
 -- | Helper predicate.
 isLocalReference :: Operand -> Bool

@@ -103,12 +103,14 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
 #if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
   if (pointer_lock != NULL) {
-    size_t temp = *((size_t*)pointer_lock);
+    if (key != 0) { // 0 is the don't-care value
+      size_t temp = *((size_t*)pointer_lock);
 
-    if(temp != key) {
-      __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
-                             key, temp, __softboundcets_lock_next_location);
-      __softboundcets_abort_reason("read through pointer after free or return from function");
+      if(temp != key) {
+        __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
+                               key, temp, __softboundcets_lock_next_location);
+        __softboundcets_abort_reason("read through pointer after free or return from function");
+      }
     }
   } else {
     __softboundcets_printf("[temporal_load_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
@@ -130,12 +132,14 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
 #if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
   if (pointer_lock != NULL) {
-    size_t temp = *((size_t*)pointer_lock);
+    if (key != 0) { // 0 is the don't-care value
+      size_t temp = *((size_t*)pointer_lock);
 
-    if(temp != key) {
-      __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key=%zx, *lock=%zx\n",
-                             key, temp);
-      __softboundcets_abort_reason("write through pointer after free or return from function");
+      if(temp != key) {
+        __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key=%zx, *lock=%zx\n",
+                               key, temp);
+        __softboundcets_abort_reason("write through pointer after free or return from function");
+      }
     }
   } else {
     __softboundcets_printf("[temporal_store_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
@@ -179,15 +183,15 @@ __softboundcets_destroy_stack_key(size_t key){
 }
 
 __WEAK_INLINE__ void
-__softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
-  size_t temp_id;
-
+__softboundcets_handle_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key) {
+  // Allocate a key value and a lock location in the lock metadata space.
+  // Associate the lock with the key by writing the key value through the lock.
+  // Allocate an entry in the primary trie for the pointer.
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
-  *((size_t**) ptr_lock) = __softboundcets_global_lock;
-  temp_id = **((size_t**) ptr_lock);
-  *((size_t*) ptr_key) = temp_id;
+  *((size_t**) ptr_lock) = (size_t*)1;
+  *((size_t*) ptr_key) = 0;
 #else
-  temp_id = __softboundcets_key_id_counter++;
+  size_t temp_id = __softboundcets_key_id_counter++;
   *((size_t**) ptr_lock) = (size_t*)__softboundcets_allocate_lock_location();
   *((size_t*) ptr_key) = temp_id;
   **((size_t**) ptr_lock) = temp_id;
@@ -202,43 +206,52 @@ __softboundcets_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_key){
 }
 
 __WEAK_INLINE__ void
-__softboundcets_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
+__softboundcets_handle_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
 
-  if (ptr_lock != NULL && ptr != NULL) {
+  if (ptr_lock != NULL) { // Could still be don't-care metadata
+    if (key != 0) { // 0 is the don't-care key
 #if defined(SOFTBOUNDCETS_DEBUG)
-    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
-                           ptr, ptr_lock, *((size_t*) ptr_lock));
+      __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
+                             ptr, ptr_lock, *((size_t*) ptr_lock));
 #endif
 
 #if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
-    size_t temp = *((size_t*)ptr_lock);
+      size_t temp = *((size_t*)ptr_lock);
 
-    if(temp != key) {
-      __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
-                             key, temp, __softboundcets_lock_next_location);
-      __softboundcets_abort_reason("double free");
-    }
+      if(temp != key) {
+        __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
+                               key, temp, __softboundcets_lock_next_location);
+        __softboundcets_abort_reason("double free");
+      }
 #endif
 
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE) || defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
-    if (ptr_lock == (void*)__softboundcets_global_lock) {
-      __softboundcets_abort_reason("deallocating global variable");
-    }
+      if (ptr_lock == (void*)__softboundcets_global_lock) {
+        __softboundcets_abort_reason("deallocating global variable");
+      }
 
-    *((size_t*)ptr_lock) = 0;
-    *((void**) ptr_lock) = __softboundcets_lock_next_location;
-    __softboundcets_lock_next_location = ptr_lock;
+      *((size_t*)ptr_lock) = 1; // Set the key to 1
+      // 0 is the don't-care key so we can't use that or subsequent free() calls will ignore this pointer.
+      // Any nonzero key value will do as long as we can guarantee that it is different from any
+      // potential key that might have already been set. Since the key value 1 is reserved for globals,
+      // it does not appear in heap allocations, so we know that the value 1 can't be the same as the old key value.
+      *((void**) ptr_lock) = __softboundcets_lock_next_location;
+      __softboundcets_lock_next_location = ptr_lock;
 #endif
-    return;
-  } else {
+      return;
+    } else {
 #if defined(SOFTBOUNDCETS_DEBUG)
-    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
-                           ptr, ptr_lock);
+      __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
+                             ptr, ptr_lock);
 #endif
-    return;
+      // Freeing a pointer with don't-care metadata, so do nothing.
+      return;
+    }
   }
+  // Freeing a null pointer -- this is a no-op in C, so do nothing.
+  return;
 }
 
 __WEAK_INLINE__ void

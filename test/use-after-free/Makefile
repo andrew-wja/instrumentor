@@ -11,19 +11,19 @@ clean:
 
 # Simple uninstrumented version of the test program
 test.ll: test.c
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -S -o test.ll
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -c test.c -emit-llvm -S -o test.ll
 
 test.bc: test.c
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 -c test.c -emit-llvm -o test.bc
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 -c test.c -emit-llvm -o test.bc
 
 test.s: test.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 test.ll -S -o test.s
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 test.ll -S -o test.s
 
 test.dump: test
 	objdump -D test > test.dump
 
 test: test.bc
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 test.bc -o test
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 test.bc -o test
 
 run-test: test
 	./test
@@ -42,10 +42,10 @@ instrumented.bc: test.bc
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH instrumentor --blacklist $(realpath ../../dist/runtimes/release/blacklist.SoftboundCETS) --checks --register-metadata --stack --load --store --call --bitcast instrumented.bc
 
 instrumented.s: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.s
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 instrumented.ll -S -o instrumented.s
 
 instrumented.opt.s: instrumented.ll
-	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O0 instrumented.ll -S -o instrumented.opt.s
+	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../llvm-root/bin):$$PATH clang -O3 instrumented.ll -S -o instrumented.opt.s
 
 instrumented-release.dump: instrumented-release.exe
 	objdump -D instrumented-release.exe > instrumented-release.dump

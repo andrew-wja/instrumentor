@@ -431,7 +431,7 @@ softboundcets_strndup(const char* s, size_t n) {
   if(ret_ptr == NULL) {
     __softboundcets_store_null_return_metadata();
   } else {
-    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
+    __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
     __softboundcets_store_return_metadata(ret_ptr,
                                           (void*)
                                           ((char*)ret_ptr + strlen(ret_ptr) + 1),
@@ -448,7 +448,7 @@ softboundcets_strdup(const char* s) {
   if(ret_ptr == NULL) {
     __softboundcets_store_null_return_metadata();
   } else {
-    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
+    __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
     __softboundcets_store_return_metadata(ret_ptr,
                                           (void*)
                                           ((char*)ret_ptr + strlen(ret_ptr) + 1),
@@ -538,7 +538,7 @@ softboundcets_calloc(size_t nmemb, size_t size) {
 
  void* ret_ptr = calloc(nmemb, size);
  if(ret_ptr != NULL) {
-   __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
+   __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
   __softboundcets_store_dontcare_return_metadata();
 #else
@@ -577,7 +577,7 @@ softboundcets_malloc(size_t size) {
   } else {
     key_type ptr_key=1;
     lock_type ptr_lock=NULL;
-    __softboundcets_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
+    __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
   __softboundcets_store_dontcare_return_metadata();
@@ -601,11 +601,9 @@ softboundcets_localtime(const time_t* timep) {
 
 __WEAK_INLINE__ void softboundcets_free(void* ptr) {
   // FIXME: more checks are technically required to verify it is a malloced address
-  if(ptr != NULL){
-    void* ptr_lock = __softboundcets_load_lock_shadow_stack(1);
-    size_t ptr_key = __softboundcets_load_key_shadow_stack(1);
-    __softboundcets_heap_deallocation(ptr, ptr_lock, ptr_key);
-  }
+  void* ptr_lock = __softboundcets_load_lock_shadow_stack(1);
+  size_t ptr_key = __softboundcets_load_key_shadow_stack(1);
+  __softboundcets_handle_heap_deallocation(ptr, ptr_lock, ptr_key);
   free(ptr);
 }
 
