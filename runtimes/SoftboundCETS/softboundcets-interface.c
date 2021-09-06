@@ -202,8 +202,13 @@ __softboundcets_handle_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_k
   __softboundcets_allocation_secondary_trie_allocate(ptr);
 
 #if defined(SOFTBOUNDCETS_DEBUG)
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+    __softboundcets_printf("[heap_allocation] ptr = %p, lock = %p, key = 0\n",
+                           ptr, *ptr_lock);
+#else
     __softboundcets_printf("[heap_allocation] ptr = %p, lock = %p, key = %zx\n",
                            ptr, *ptr_lock, temp_id);
+#endif
 #endif
 }
 

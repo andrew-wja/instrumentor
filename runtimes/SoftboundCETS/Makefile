@@ -1,13 +1,13 @@
 .PHONY: all clean install
 
-all: libSoftBoundCETS_full.a libSoftBoundCETS_bench.a
+all: libSoftBoundCETS_full.a libSoftBoundCETS_full.so libSoftBoundCETS_bench.a libSoftBoundCETS_bench.so libSoftBoundCETS_nochecks.a libSoftBoundCETS_nochecks.so
 
 CFLAGS+=-Wall -pedantic -O3 -march=native -fno-strict-aliasing
 
 ARFLAGS=-rcs
 
 clean:
-	rm -f *.bc *.a *.o
+	rm -f *.bc *.a *.o *.so
 
 %.bc: %.c
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH clang ${CFLAGS} -flto -c $< -o $@
@@ -48,7 +48,8 @@ libSoftBoundCETS_nochecks.a: softboundcets-common.nochecks.bc softboundcets-init
 libSoftBoundCETS_nochecks.so: softboundcets-common.nochecks.o softboundcets-init.nochecks.o softboundcets-internal.nochecks.o softboundcets-wrappers.nochecks.o softboundcets-interface.nochecks.o
 	LD_LIBRARY_PATH=$(realpath ../../llvm-root/lib) PATH=$(realpath ../../dist):$(realpath ../../llvm-root/bin):$$PATH llvm-ar ${ARFLAGS} $@ $^
 
-install: libSoftBoundCETS_full.a libSoftBoundCETS_full.so libSoftBoundCETS_bench.a libSoftBoundCETS_bench.so libSoftBoundCETS_nochecks.a libSoftBoundCETS_nochecks.so
+install:
 	mkdir -p ${DESTDIR}/lib
-	cp $^ ${DESTDIR}/lib
+	cp *.so ${DESTDIR}/lib
+	cp *.a ${DESTDIR}/lib
 	cp blacklist ${DESTDIR}/blacklist.SoftboundCETS

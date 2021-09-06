@@ -25,13 +25,13 @@ dist/instrumentor: build-instrumentor
 	LD_LIBRARY_PATH=$(realpath ./llvm-root/lib) PATH=$(realpath ./llvm-root/bin):$$PATH stack --local-bin-path dist install
 
 dist/runtimes/release: DESTDIR = `realpath $@`
-dist/runtimes/release:
+dist/runtimes/release: runtimes-clean
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all
 	${MAKE} DESTDIR=${DESTDIR} -C ./runtimes install
 
 dist/runtimes/debug: DESTDIR = `realpath $@`
-dist/runtimes/debug:
+dist/runtimes/debug: runtimes-clean
 	mkdir -p $@
 	${MAKE} -B -C ./runtimes all CFLAGS="-g -DSOFTBOUNDCETS_DEBUG"
 	${MAKE} DESTDIR=${DESTDIR} -C ./runtimes install
@@ -55,6 +55,21 @@ debug-test: dist/runtimes/debug
 debug-bench-test: dist/runtimes/debug
 	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x bench-instrumented-debug.dump run-bench-instrumented-debug; done
 
+nolto-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x nolto-instrumented-release.dump run-nolto-instrumented-release; done
+
+nolto-bench-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x nolto-bench-instrumented-release.dump run-nolto-bench-instrumented-release; done
+
+nolto-nochecks-test: dist/runtimes/release
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x nolto-nochecks-instrumented-release.dump run-nolto-nochecks-instrumented-release; done
+
+nolto-debug-test: dist/runtimes/debug
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x run-nolto-instrumented-debug; done
+
+nolto-debug-bench-test: dist/runtimes/debug
+	@for x in `ls test`; do echo; printf "\x1b[32;1mRunning test case $$x\x1b[0m\n\n"; $(MAKE) -C test/$$x nolto-bench-instrumented-debug.dump run-nolto-bench-instrumented-debug; done
+
 
 dist-clean:
 	rm -rf dist*
@@ -68,6 +83,9 @@ llvm-clean:
 
 runtimes-clean:
 	${MAKE} -C ./runtimes clean
+
+dist-runtimes-clean:
+	rm -rf dist/runtimes
 
 clean: dist-clean test-clean runtimes-clean
 	stack clean
