@@ -129,11 +129,11 @@ __softboundcets_allocate_lock_location() {
   if(__softboundcets_lock_next_location == NULL) {
 #if defined(SOFTBOUNDCETS_DEBUG)
       __softboundcets_printf("[allocate_lock_location] new_lock_location=%p\n", __softboundcets_lock_new_location);
+#endif
       if(__softboundcets_lock_new_location > __softboundcets_heap_key_table_ptr + __SOFTBOUNDCETS_N_TEMPORAL_ENTRIES) {
-        __softboundcets_printf("[allocate_lock_location] out of temporal free entries \n");
+        __softboundcets_printf("[allocate_lock_location] out of temporal free entries\n");
         __softboundcets_abort();
       }
-#endif
     return __softboundcets_lock_new_location++;
   } else {
     temp = __softboundcets_lock_next_location;
