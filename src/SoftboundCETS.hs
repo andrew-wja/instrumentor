@@ -51,9 +51,9 @@ data GlobalMetadata = Global { gbase :: Const.Constant
                              , gkey :: Const.Constant
                              } -- Globals use the runtime-initialized global lock
 
-type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSState a
+type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSPassState a
 
-data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
+data SBCETSPassState = SBCETSPassState { globalLockPtr :: Maybe Operand
                                -- ^ Pointer to the global lock.
                                , localStackFrameKeyPtr :: Maybe Operand
                                -- ^ Pointer to the key value for the current stack frame.
@@ -99,9 +99,9 @@ data SBCETSState = SBCETSState { globalLockPtr :: Maybe Operand
                                -- ^ A 'Map' from pointer 'Operand's in the global scope to their metadata.
                                }
 
--- | Create an empty 'SBCETSState'
-emptySBCETSState :: SBCETSState
-emptySBCETSState = SBCETSState Nothing Nothing Nothing
+-- | Create an empty 'SBCETSPassState'
+emptySBCETSPassState :: SBCETSPassState
+emptySBCETSPassState = SBCETSPassState Nothing Nothing Nothing
                                Data.Set.empty
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing Data.Set.empty
@@ -110,9 +110,9 @@ emptySBCETSState = SBCETSState Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
 
--- | The initial 'SBCETSState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
-initSBCETSState :: SBCETSState
-initSBCETSState = emptySBCETSState
+-- | The initial 'SBCETSPassState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
+initSBCETSPassState :: SBCETSPassState
+initSBCETSPassState = emptySBCETSPassState
   { stdlibWrapperPrototypes = Data.Map.fromList [
     (mkName "calloc",   (mkName "softboundcets_calloc",   FunctionType (ptr i8) [i64, i64] False)),
     (mkName "malloc",   (mkName "softboundcets_malloc",   FunctionType (ptr i8) [i64] False)),
@@ -146,19 +146,19 @@ initSBCETSState = emptySBCETSState
   }
 
 -- | Mark a pointer as belonging to a particular 'PointerClass'.
-mark :: MonadState SBCETSState m => Operand -> PointerClass -> m ()
+mark :: MonadState SBCETSPassState m => Operand -> PointerClass -> m ()
 mark p c = modify $ \s -> s { classifications = Data.Map.insert p c $ classifications s }
 
 -- | Query the 'PointerClass' of a pointer, defaulting to the given 'PointerClass' if the pointer is not tracked.
-query :: MonadState SBCETSState m => PointerClass-> Operand -> m PointerClass
+query :: MonadState SBCETSPassState m => PointerClass-> Operand -> m PointerClass
 query d p = gets (maybe d id . (Data.Map.lookup p . classifications))
 
 -- | Associate local metadata storage with the given pointer.
-associate :: MonadState SBCETSState m => Operand -> LocalMetadata -> m ()
+associate :: MonadState SBCETSPassState m => Operand -> LocalMetadata -> m ()
 associate p m = modify $ \s -> s { localMetadata = Data.Map.insert p m $ localMetadata s }
 
 -- | Mark the registers holding the metadata values for the given pointer as live
-gen :: MonadState SBCETSState m => Operand -> (Operand, Operand, Operand, Operand) -> m ()
+gen :: MonadState SBCETSPassState m => Operand -> (Operand, Operand, Operand, Operand) -> m ()
 gen p (baseReg, boundReg, keyReg, lockReg) = do
   useRegMeta <- gets (CLI.reuseRegisters . options)
   if useRegMeta
@@ -170,7 +170,7 @@ gen p (baseReg, boundReg, keyReg, lockReg) = do
   else return ()
 
 -- | Mark the registers holding the metadata values for the given pointer as dead
-kill :: MonadState SBCETSState m => Operand -> m ()
+kill :: MonadState SBCETSPassState m => Operand -> m ()
 kill p =  do
   useRegMeta <- gets (CLI.reuseRegisters . options)
   if useRegMeta
@@ -182,7 +182,7 @@ kill p =  do
   else return ()
 
 -- | Mark only the lock register for the given pointer as dead
-killLock :: MonadState SBCETSState m => Operand -> m ()
+killLock :: MonadState SBCETSPassState m => Operand -> m ()
 killLock p =  do
   useRegMeta <- gets (CLI.reuseRegisters . options)
   if useRegMeta
@@ -191,7 +191,7 @@ killLock p =  do
   else return ()
 
 -- | Reload the metadata value from the stack into a register if necessary
-reload :: (MonadIRBuilder m, MonadModuleBuilder m, MonadState SBCETSState m) => (SBCETSState -> Map Operand Operand) -> Operand -> Operand -> m Operand
+reload :: (MonadIRBuilder m, MonadModuleBuilder m, MonadState SBCETSPassState m) => (SBCETSPassState -> Map Operand Operand) -> Operand -> Operand -> m Operand
 reload registerMeta localMeta p = do
   isLive <- gets (Data.Map.member p . registerMeta)
   if isLive
@@ -201,7 +201,7 @@ reload registerMeta localMeta p = do
     return reg
 
 -- | Decide whether the given function symbol is a function that should not be instrumented.
-isIgnoredFunction :: MonadState SBCETSState m => Name -> m Bool
+isIgnoredFunction :: MonadState SBCETSPassState m => Name -> m Bool
 isIgnoredFunction func
   | Helpers.isInfixOfName "__softboundcets" func = return True  -- One of our runtime functions
   | Helpers.isInfixOfName "isoc99" func = return True           -- ISO C99 intrinsic functions
@@ -211,7 +211,7 @@ isIgnoredFunction func
       return $ Data.Set.member func blist               -- Function symbols explicitly blacklisted by the user
 
 -- | Decide whether the given function symbol returns a safe pointer
-returnsSafePointer :: MonadState SBCETSState m => Name -> m Bool
+returnsSafePointer :: MonadState SBCETSPassState m => Name -> m Bool
 returnsSafePointer func
   | (mkName "malloc") == func = return True
   | (mkName "calloc") == func = return True
@@ -219,11 +219,11 @@ returnsSafePointer func
   | otherwise = return False
 
 -- | Check if the given function symbol is a function with a runtime wrapper
-isWrappedFunction :: MonadState SBCETSState m => Name -> m Bool
+isWrappedFunction :: MonadState SBCETSPassState m => Name -> m Bool
 isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapperPrototypes)
 
 -- | 'inspect' traverses pointer-type expressions and returns the metadata.
-inspect :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, LocalMetadata))
+inspect :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, LocalMetadata))
 inspect p
   | (LocalReference (PointerType ty _) _) <- p = do
       if Helpers.isFunctionType ty
@@ -288,7 +288,7 @@ inspect p
         (Right _) -> error $ "inspect: in function " ++ (show fname) ++ ": argument " ++ pp ++ " is not a pointer"
 
 -- | Allocate local variables to hold the metadata for the given pointer.
-allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
+allocateLocalMetadataStorage :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
 allocateLocalMetadataStorage p = do
   let p' = Helpers.walk p
   allocated <- gets (Data.Map.member p' . localMetadata)
@@ -307,7 +307,7 @@ allocateLocalMetadataStorage p = do
     error $ "allocateLocalMetadataStorage: in function " ++ fname ++ ": storage already allocated for metadata for pointer " ++ pp
 
 -- | Look up the local variables allocated to hold metadata for the given pointer
-getLocalMetadataStorage :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
+getLocalMetadataStorage :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m LocalMetadata
 getLocalMetadataStorage p = do
   let p' = Helpers.walk p
   allocated <- gets ((Data.Map.lookup p') . localMetadata)
@@ -321,7 +321,7 @@ getLocalMetadataStorage p = do
 --   Only LocalReference pointers require local variables allocated to hold metadata. The metadata for global references
 --   is held in global variables, and the metadata for constant expressions of pointer type is computed as more constant
 --   expressions, and so doesn't require storage. Returns a list of pointer 'Operand's requiring local metadata storage.
-identifyLocalMetadataAllocations :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => BasicBlock -> m [Operand]
+identifyLocalMetadataAllocations :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => BasicBlock -> m [Operand]
 identifyLocalMetadataAllocations (BasicBlock _ i t) = do
   isites <- liftM concat $ mapM instAllocations i
   tsites <- termAllocations t
@@ -473,13 +473,13 @@ emitRuntimeAPIFunctionDecl decl
   | otherwise = undefined
 
 -- | Emit a call to a runtime API function.
-emitRuntimeAPIFunctionCall :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m, MonadModuleBuilder m) => String -> [Operand] -> m Operand
+emitRuntimeAPIFunctionCall :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSPassState m, MonadModuleBuilder m) => String -> [Operand] -> m Operand
 emitRuntimeAPIFunctionCall n args = do
   (fname, fproto) <- gets ((!! (mkName n)) . runtimeFunctionPrototypes)
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
 
 -- | Load the metadata for the pointer stored at the given memory address (first argument) from the runtime. Associate the loaded metadata with the given pointer (second argument)
-emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m LocalMetadata
+emitRuntimeMetadataLoad :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m LocalMetadata
 emitRuntimeMetadataLoad addr loadedPtr
   | (LocalReference (PointerType _ _) _) <- loadedPtr = do
       allocated <- gets (Data.Map.member loadedPtr . localMetadata)
@@ -525,7 +525,7 @@ emitRuntimeMetadataLoad addr loadedPtr
       error $ "emitRuntimeMetadataLoad: expected local variable pointer but saw " ++ pLoadedPtr
 
 -- | Create a local key and lock for entities allocated in the current stack frame
-emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
+emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitLocalKeyAndLockCreation = do
   keyPtr <- (alloca i64 Nothing 8) `named` (fromString "sbcets.stack_frame_key")
   lockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.stack_frame_lock")
@@ -534,7 +534,7 @@ emitLocalKeyAndLockCreation = do
   return ()
 
 -- | Invalidate the local key; We do this just prior to returning from a function.
-emitLocalKeyAndLockDestruction :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
+emitLocalKeyAndLockDestruction :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitLocalKeyAndLockDestruction = do
   keyPtr <- gets (fromJust . localStackFrameKeyPtr)
   keyReg <- load keyPtr 0
@@ -542,20 +542,20 @@ emitLocalKeyAndLockDestruction = do
   return ()
 
 -- | Allocate space on the shadow stack for the parameters of an instrumented function we are about to call.
-emitShadowStackAllocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Integer -> m ()
+emitShadowStackAllocation :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Integer -> m ()
 emitShadowStackAllocation numArgs = do
   numArgs' <- pure $ int32 numArgs
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_allocate_shadow_stack_space" [numArgs']
   return ()
 
 -- | Deallocate the shadow stack space for the instrumented function which just returned.
-emitShadowStackDeallocation :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
+emitShadowStackDeallocation :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
 emitShadowStackDeallocation = do
   _ <- emitRuntimeAPIFunctionCall "__softboundcets_deallocate_shadow_stack_space" []
   return ()
 
 -- | Load the metadata for a pointer function parameter from the shadow stack.
-emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Integer -> m LocalMetadata
+emitMetadataLoadFromShadowStack :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Integer -> m LocalMetadata
 emitMetadataLoadFromShadowStack p ix = do
   ix' <- pure $ int32 ix
   baseReg <- emitRuntimeAPIFunctionCall "__softboundcets_load_base_shadow_stack" [ix']
@@ -565,7 +565,7 @@ emitMetadataLoadFromShadowStack p ix = do
   emitMetadataStoreToLocalVariables p (baseReg, boundReg, keyReg, lockReg)
 
 -- | Store the metadata in registers for the given pointer into the local variables allocated to hold it.
-emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> (Operand, Operand, Operand, Operand) -> m LocalMetadata
+emitMetadataStoreToLocalVariables :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> (Operand, Operand, Operand, Operand) -> m LocalMetadata
 emitMetadataStoreToLocalVariables p (baseReg, boundReg, keyReg, lockReg) = do
   meta <- getLocalMetadataStorage p
   store (base meta) 8 baseReg
@@ -576,7 +576,7 @@ emitMetadataStoreToLocalVariables p (baseReg, boundReg, keyReg, lockReg) = do
   return meta
 
 -- | Store the metadata for a pointer on the shadow stack at the specified position.
-emitMetadataStoreToShadowStack :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m) => Maybe Name -> Operand -> Integer -> m ()
+emitMetadataStoreToShadowStack :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Maybe Name -> Operand -> Integer -> m ()
 emitMetadataStoreToShadowStack callee p ix = do
   meta <- inspect p
   if isNothing meta
@@ -622,7 +622,7 @@ emitMetadataStoreToShadowStack callee p ix = do
     return ()
 
 -- | Create local metadata variables in a function to hold the metadata for the given global variable
-populateLocalMetadataForGlobal :: (HasCallStack, MonadState SBCETSState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m ()
+populateLocalMetadataForGlobal :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m ()
 populateLocalMetadataForGlobal g = do
   let g' = Helpers.walk g
   localMeta <- getLocalMetadataStorage g'
@@ -656,7 +656,7 @@ populateLocalMetadataForGlobal g = do
     gen g' (base', bound', key', lock') -- We just generated these registers
     return ()
 
-generateDCMetadata :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
+generateDCMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
 generateDCMetadata = do
   dcBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.base")
   dcBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.bound")
@@ -675,7 +675,7 @@ generateDCMetadata = do
   let regs = (dcMetaBase, dcMetaBound, dcMetaKey, dcMetaLock)
   return (meta, regs)
 
-generateNullMetadata :: (HasCallStack, MonadState SBCETSState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
+generateNullMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m (LocalMetadata, (Operand, Operand, Operand, Operand))
 generateNullMetadata = do
   nullBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
   nullBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
@@ -696,7 +696,7 @@ generateNullMetadata = do
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
 instrument blacklist' opts m = do
-  let sbcetsState = initSBCETSState { options = opts, blacklist = Data.Set.fromList $ map mkName blacklist' }
+  let sbcetsState = initSBCETSPassState { options = opts, blacklist = Data.Set.fromList $ map mkName blacklist' }
   ((m', _), warnings) <- runInstrumentorPass sbcetsPass sbcetsState () m
   mapM_ (putStrLn . ("instrumentor: "++)) warnings
   return m'
@@ -713,7 +713,7 @@ instrument blacklist' opts m = do
       mapM_ instrumentDefinition nonTypeDefs
       return ()
 
-    instrumentDefinition :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Definition -> m ()
+    instrumentDefinition :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => Definition -> m ()
     instrumentDefinition g
       -- Don't instrument empty functions (i.e. forward declarations)
       | (GlobalDefinition f@(Function {})) <- g, null $ basicBlocks f = emitDefn g
@@ -732,7 +732,7 @@ instrument blacklist' opts m = do
           instrumentGlobalVariable gv
       | otherwise = emitDefn g
 
-    instrumentGlobalVariable :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Global -> m ()
+    instrumentGlobalVariable :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => Global -> m ()
     instrumentGlobalVariable g
       | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_ctors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-ctors-global-variable
       | (GlobalVariable {}) <- g, name g == (Name $ fromString "llvm.global_dtors") = return () -- https://llvm.org/docs/LangRef.html#the-llvm-global-dtors-global-variable
@@ -772,7 +772,7 @@ instrument blacklist' opts m = do
         pg <- pure $ show g
         error $ "instrumentGlobalVariable: expected global variable, but got: " ++ pg
 
-    instrumentFunction :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSState m, MonadWriter [String] m, MonadModuleBuilder m) => Global -> m ()
+    instrumentFunction :: (HasCallStack, MonadIRBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => Global -> m ()
     instrumentFunction f
       | (Function {}) <- f = do
           let name' = if name f == mkName "main" then mkName "softboundcets_main" else name f
