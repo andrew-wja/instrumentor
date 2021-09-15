@@ -124,6 +124,8 @@ initSBCETSState = emptySBCETSState
     (mkName "__softboundcets_metadata_check",                    FunctionType void [(ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
     (mkName "__softboundcets_metadata_load",                     FunctionType void [ptr i8, (ptr $ ptr i8), (ptr $ ptr i8), ptr i64, (ptr $ ptr i8)] False),
     (mkName "__softboundcets_metadata_store",                    FunctionType void [ptr i8, ptr i8, ptr i8, i64, ptr i8] False),
+    (mkName "__softboundcets_memcopy_check",                     FunctionType void [ptr i8, ptr i8, i64, ptr i8, ptr i8, ptr i8, ptr i8, i64, ptr i8, i64, ptr i8] False),
+    (mkName "__softboundcets_memset_check",                      FunctionType void [ptr i8, i64, ptr i8, ptr i8, i64, ptr i8] False),
     (mkName "__softboundcets_load_base_shadow_stack",            FunctionType (ptr i8) [i32] False),
     (mkName "__softboundcets_load_bound_shadow_stack",           FunctionType (ptr i8) [i32] False),
     (mkName "__softboundcets_load_key_shadow_stack",             FunctionType (i64) [i32] False),
@@ -368,7 +370,9 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
             else do
               let s = head $ lefts argTys
               error $ "identifyLocalMetadataAllocations: failed to compute type of function parameter (" ++ s ++ ")"
-          else return []
+          else do
+            tell ["identifyLocalMetadataAllocations: ignoring function " ++ show fname ]
+            return []
       -- Case 3a: Local metadata must be available for all incoming values to a phi instruction of pointer type.
       | (_ := o) <- inst, (Phi (PointerType ty _) incoming _) <- o = do
           if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
@@ -416,7 +420,9 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
             else do
               let s = head $ lefts argTys
               error $ "identifyLocalMetadataAllocations: failed to compute type of function parameter (" ++ s ++ ")"
-          else return []
+          else do
+            tell ["identifyLocalMetadataAllocations: ignoring function " ++ show fname ]
+            return []
       -- Case 7: Local metadata needs to be available for the target of a store instruction (and the source if it is a pointer)
       | (Do o) <- inst, (Store _ tgt src _ _ _) <- o = do
           enable <- gets (CLI.instrumentStore . options)
@@ -718,7 +724,9 @@ instrument blacklist' opts m = do
           ignore <- isIgnoredFunction (name f)
           if (not ignore && not hasWrapper) || name f == mkName "main" then do
             instrumentFunction f
-          else emitDefn g
+          else do
+            tell ["instrumentDefinition: ignoring function " ++ (show $ name f) ]
+            emitDefn g
       | (GlobalDefinition gv@(GlobalVariable {})) <- g = do
           emitDefn g
           instrumentGlobalVariable gv
@@ -992,7 +1000,9 @@ instrument blacklist' opts m = do
         enable <- gets (CLI.instrumentCall . options)
         ignore <- isIgnoredFunction fname
         if (not enable || ignore)
-        then Helpers.emitNamedInstStripMeta ["tbaa"] i
+        then do
+          tell ["instrumentInst: ignoring function " ++ show fname ]
+          Helpers.emitNamedInstStripMeta ["tbaa"] i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol
@@ -1185,7 +1195,9 @@ instrument blacklist' opts m = do
         enable <- gets (CLI.instrumentCall . options)
         ignore <- isIgnoredFunction fname
         if (not enable || ignore)
-        then Helpers.emitNamedInstStripMeta ["tbaa"] i
+        then do
+          tell ["instrumentInst: ignoring function " ++ show fname ]
+          Helpers.emitNamedInstStripMeta ["tbaa"] i
         else do
           case fname of
             (Name {}) -> do -- Calling a function symbol

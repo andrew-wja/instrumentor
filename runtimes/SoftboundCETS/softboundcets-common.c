@@ -282,8 +282,13 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   size_t ptr = (size_t) addr_of_ptr;
   __softboundcets_trie_entry_t* trie_secondary_table;
 
-  size_t primary_index = ( ptr >> 25);
+  size_t primary_index = (ptr >> 25);
   trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
+
+/* The approach chosen here for lookup of a pointer for which no metadata is
+ * available is to yield the don't-care metadata for the pointer in benchmarking mode, and null pointer metadata otherwise. This allows
+ * us to proceed in the case of uninstrumented pointers for benchmarking, and abort when the pointer is used when checking for real.
+ */
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
     if(trie_secondary_table == NULL) { // We don't have an entry for this pointer
@@ -298,26 +303,43 @@ __softboundcets_metadata_load(void* addr_of_ptr,
       *((size_t*) key ) = 0;
       *((void**) lock) = NULL;
 #endif
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_load] no metadata found for pointer ptr_addr=%p, ptr=%p\n",
+                            addr_of_ptr, *((void **)addr_of_ptr));
+#endif
       return;
+    }
+  } else {
+    size_t secondary_index = ((ptr >> 3) & 0x3fffff);
+    __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
+
+    if (entry_ptr == NULL ) { // We don't have an entry for this pointer
+#if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
+      *((void**) base) = NULL;
+      *((void**) bound) = (void*)PTRDIFF_MAX;
+      *((size_t*) key ) = 0;
+      *((void**) lock) = (void*)1;
+#else
+      *((void**) base) = NULL;
+      *((void**) bound) = NULL;
+      *((size_t*) key ) = 0;
+      *((void**) lock) = NULL;
+#endif
+#if defined(SOFTBOUNDCETS_DEBUG)
+    __softboundcets_printf("[metadata_load] no metadata found for pointer ptr_addr=%p, ptr=%p\n",
+                            addr_of_ptr, *((void **)addr_of_ptr));
+#endif
+    } else {
+      *((void**) base) = entry_ptr->base;
+      *((void**) bound) = entry_ptr->bound;
+      *((size_t*) key) = entry_ptr->key;
+      *((void**) lock) = (void*) entry_ptr->lock;
     }
   }
 
-  size_t secondary_index = ((ptr >> 3) & 0x3fffff);
-  __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
-
-#if defined(SOFTBOUNDCETS_DEBUG)
-  assert(entry_ptr && "[metadata_load] lookup failed for input pointer");
-#endif
-
-  *((void**) base) = entry_ptr->base;
-  *((void**) bound) = entry_ptr->bound;
-  *((size_t*) key) = entry_ptr->key;
-  *((void**) lock) = (void*) entry_ptr->lock;
-
 #if defined(SOFTBOUNDCETS_DEBUG)
   __softboundcets_printf("[metadata_load] ptr_addr=%p, ptr=%p, base=%p, bound=%p, key=%zx, lock=%p\n",
-                          addr_of_ptr, *((void **)addr_of_ptr), entry_ptr->base, entry_ptr->bound,
-                          entry_ptr->key, entry_ptr->lock);
+                          addr_of_ptr, *((void **)addr_of_ptr), *base, *bound, *key, *lock);
 #endif
   return;
 }
