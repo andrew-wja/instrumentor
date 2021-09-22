@@ -93,15 +93,7 @@ data SBCETSPassState = SBCETSPassState { globalLockPtr :: Maybe Operand
                                        --   pointers with the same names in different functions as belonging to the same class. Outside a function, 'classifications' contains global variables.
                                        , blacklist :: Data.Set.Set Name
                                        -- ^ The set of blacklisted function symbols (these will not be instrumented).
-                                       , dontCareMetadata :: Maybe VariableMetadata
-                                       -- ^ Metadata that can never cause any runtime checks to fail.
-                                       , nullMetadata :: Maybe VariableMetadata
-                                       -- ^ Metadata for null pointers.
-                                       , dontCareMetadataRegs :: Maybe (Operand, Operand, Operand, Operand)
-                                       -- ^ Metadata that can never cause any runtime checks to fail (in registers).
-                                       , nullMetadataRegs :: Maybe (Operand, Operand, Operand, Operand)
-                                       -- ^ Metadata for null pointers (in registers).
-                                       , varMeta :: Map Operand VariableMetadata
+                                       , localVariableMetadata :: Map Operand VariableMetadata
                                        -- ^ A 'Map' from pointer 'Operand's in the current function to their variable metadata.
                                        , localConstantMetadata :: Map Operand ConstantMetadata
                                        -- ^ A 'Map' from pointer 'Operand's in the current function to their constant metadata.
@@ -124,7 +116,6 @@ emptySBCETSPassState = SBCETSPassState Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty
                                CLI.defaultOptions Nothing Data.Set.empty
                                Data.Map.empty Data.Set.empty
-                               Nothing Nothing Nothing Nothing
                                Data.Map.empty Data.Map.empty Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
 
@@ -173,7 +164,7 @@ query d p = gets (maybe d id . (Data.Map.lookup p . classifications))
 
 -- | Associate local metadata storage with the given pointer.
 associate :: MonadState SBCETSPassState m => Operand -> (Either VariableMetadata ConstantMetadata) -> m ()
-associate p (Left m) = modify $ \s -> s { varMeta = Data.Map.insert p m $ varMeta s }
+associate p (Left m) = modify $ \s -> s { localVariableMetadata = Data.Map.insert p m $ localVariableMetadata s }
 associate p (Right m) = modify $ \s -> s { localConstantMetadata = Data.Map.insert p m $ localConstantMetadata s }
 
 -- | Mark the registers holding the metadata values for the given pointer as live
@@ -242,16 +233,16 @@ isWrappedFunction :: MonadState SBCETSPassState m => Name -> m Bool
 isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapperPrototypes)
 
 -- | 'inspect' traverses pointer-type expressions and returns the metadata. If there is no metadata for a pointer, it is not instrumented.
-inspect :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m) => Operand -> m (Maybe (Type, Either VariableMetadata ConstantMetadata))
+inspect :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m, MonadIRBuilder m) => Operand -> m (Maybe (Type, Either VariableMetadata ConstantMetadata))
 inspect p
   | (LocalReference (PointerType ty _) _) <- p = do
       if Helpers.isFunctionType ty
       then return Nothing -- TODO-IMPROVE: Function pointers should be checked for spatial safety at callsites.
       else do
-        haveVariableMeta <- gets (Data.Map.member p . varMeta)
+        haveVariableMeta <- gets (Data.Map.member p . localVariableMetadata)
         haveConstantMeta <- gets (Data.Map.member p . localConstantMetadata)
         if haveVariableMeta
-        then gets (Just . (ty,) . Left . (! p) . varMeta)
+        then gets (Just . (ty,) . Left . (! p) . localVariableMetadata)
         else if haveConstantMeta
         then gets (Just . (ty,) . Right . (! p) . localConstantMetadata)
         else do
@@ -264,12 +255,16 @@ inspect p
       benchmarking <- gets (CLI.benchmarkMode . options)
       if benchmarking -- Constant null pointers are not instrumented in benchmarking mode
       then return Nothing
-      else gets (Just . (ty,) . Left . fromJust . nullMetadata)
+      else do
+        nullMeta <- generateNullMetadata
+        return $ Just (ty, Right nullMeta)
   | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = do
       benchmarking <- gets (CLI.benchmarkMode . options)
       if benchmarking -- Undef pointers are not instrumented in benchmarking mode
       then return Nothing
-      else gets (Just . (ty,) . Left . fromJust . nullMetadata)
+      else do
+        nullMeta <- generateNullMetadata
+        return $ Just (ty, Right nullMeta)
   | (ConstantOperand (Const.GlobalReference (PointerType ty _) _)) <- p = do
       present <- gets (Data.Map.member p . globalMetadata)
       if present
@@ -312,7 +307,7 @@ inspect p
 allocateLocalVariableMetadataStorage :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m VariableMetadata
 allocateLocalVariableMetadataStorage p = do
   let p' = Helpers.walk p
-  allocated <- gets (Data.Map.member p' . varMeta)
+  allocated <- gets (Data.Map.member p' . localVariableMetadata)
   if not allocated
   then do
     basePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.base")
@@ -331,7 +326,7 @@ allocateLocalVariableMetadataStorage p = do
 hasLocalVariableMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m Bool
 hasLocalVariableMetadata pointer
   | (LocalReference (PointerType _ _) _) <- pointer = do
-      gets (Data.Map.member pointer . varMeta)
+      gets (Data.Map.member pointer . localVariableMetadata)
   | otherwise = do
       pPointer <- pure $ show pointer
       error $ "hasLocalVariableMetadata: expected local variable pointer but saw " ++ pPointer
@@ -340,9 +335,9 @@ hasLocalVariableMetadata pointer
 getLocalVariableMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m VariableMetadata
 getLocalVariableMetadata p = do
   let p' = Helpers.walk p
-  allocated <- gets ((Data.Map.lookup p') . varMeta)
+  allocated <- gets ((Data.Map.lookup p') . localVariableMetadata)
   if isJust allocated
-  then gets ((! p') . varMeta)
+  then gets ((! p') . localVariableMetadata)
   else do
     pp <- pure $ show p'
     error $ "getLocalVariableMetadata: no storage allocated for metadata for pointer " ++ pp
@@ -552,8 +547,8 @@ emitRuntimeAPIFunctionCall n args = do
   call (ConstantOperand $ Const.GlobalReference (ptr fproto) fname) $ map (\x -> (x, [])) args
 
 -- | Load the metadata for the pointer stored at the given memory address (first argument) from the runtime, if necessary. Place the metadata into the storage associated with the given pointer (second argument).
-getMetadataForAddress :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m (Maybe (Either VariableMetadata ConstantMetadata))
-getMetadataForAddress addr loadedPtr
+writeMetadataForAddressToLocalVariables :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> Operand -> m ()
+writeMetadataForAddressToLocalVariables addr loadedPtr
   | (LocalReference {}) <- addr = do -- Loading a pointer from memory
       haveStorage <- hasLocalVariableMetadata loadedPtr
       if haveStorage
@@ -565,22 +560,36 @@ getMetadataForAddress addr loadedPtr
         when emitCheck $ do
           _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_check" [(vBase meta), (vBound meta), (vKey meta), (vLock meta)]
           return ()
-        return $ Just $ Left meta
-      else return Nothing
+        return ()
+      else return ()
 
   | (ConstantOperand {}) <- addr = do -- Loading a global variable pointer or explicit constant address
-      meta <- inspect addr
-      if isJust meta
-      then return $ Just $ snd $ fromJust meta
-      else do
-        pAddr <- pure $ show addr
-        tell ["getMetadataForAddress: not instrumenting unsupported pointer " ++ pAddr]
-        return Nothing
+      haveStorage <- hasLocalVariableMetadata loadedPtr
+      if haveStorage
+      then do
+        meta <- inspect addr
+        if isJust meta
+        then do
+          case (snd $ fromJust meta) of
+            (Right meta') -> do -- The metadata for a constant pointer must be constant
+              baseReg <- pure $ ConstantOperand $ cBase meta'
+              boundReg <- pure $ ConstantOperand $ cBound meta'
+              keyReg <- pure $ ConstantOperand $ cKey meta'
+              glp <- gets (fromJust . globalLockPtr)
+              lockReg <- load glp 0
+              _ <- emitMetadataStoreToLocalVariables loadedPtr (baseReg, boundReg, keyReg, lockReg)
+              return ()
+            (Left _) -> error $ "writeMetadataForAddressToLocalVariables: encountered constant pointer with non-constant metadata"
+        else do
+          pAddr <- pure $ show addr
+          tell ["writeMetadataForAddressToLocalVariables: not instrumenting unsupported pointer " ++ pAddr]
+          return ()
+      else return ()
 
   | (MetadataOperand {}) <- addr = do -- Loading a metadata pointer, not handled
       pAddr <- pure $ show addr
-      tell ["getMetadataForAddress: not instrumenting unsupported pointer " ++ pAddr]
-      return Nothing
+      tell ["writeMetadataForAddressToLocalVariables: not instrumenting unsupported pointer " ++ pAddr]
+      return ()
 
 -- | Create a local key and lock for entities allocated in the current stack frame
 emitLocalKeyAndLockCreation :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ()
@@ -642,29 +651,20 @@ emitMetadataStoreToShadowStack callee p ix = do
     fname <- gets (show . name . fromJust . currentFunction)
     pp <- pure $ show p
     if isJust callee
-    then tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " passed to function " ++ (show $ fromJust callee)]
-    else tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for unsupported pointer " ++ pp ++ " being returned"]
-    meta' <- gets (fromJust . dontCareMetadata)
+    then tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for uninstrumented pointer " ++ pp ++ " passed to instrumented function " ++ (show $ fromJust callee)]
+    else tell ["emitMetadataStoreToShadowStack: in function " ++ fname ++ ": using don't-care metadata for uninstrumented pointer " ++ pp ++ " being returned from instrumented function"]
+    meta' <- generateDCMetadata
     ix' <- pure $ int32 ix
-    useRegMeta <- gets (CLI.reuseRegisters . options)
-    if useRegMeta
-    then do
-      (baseReg, boundReg, keyReg, lockReg) <- gets (fromJust . dontCareMetadataRegs)
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
-      return ()
-    else do
-      baseReg <- load (vBase meta') 0
-      boundReg <- load (vBound meta') 0
-      keyReg <- load (vKey meta') 0
-      lockReg <- load (vLock meta') 0
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
-      _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
-      return ()
+    baseReg <- pure $ ConstantOperand $ cBase meta'
+    boundReg <- pure $ ConstantOperand $ cBound meta'
+    keyReg <- pure $ ConstantOperand $ cKey meta'
+    glp <- gets (fromJust . globalLockPtr)
+    lockReg <- load glp 0
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
+    _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
+    return ()
   else do
     let meta' = snd $ fromJust meta
     case meta' of
@@ -800,11 +800,7 @@ instrument blacklist' opts m = do
                              , localStackFrameLockPtr = Nothing
                              , currentFunction = Just f
                              , currentFunctionGlobals = Data.Set.empty
-                             , dontCareMetadata = Nothing
-                             , nullMetadata = Nothing
-                             , dontCareMetadataRegs = Nothing
-                             , nullMetadataRegs = Nothing
-                             , varMeta = Data.Map.empty
+                             , localVariableMetadata = Data.Map.empty
                              , baseRegisterMetadata = Data.Map.empty
                              , boundRegisterMetadata = Data.Map.empty
                              , keyRegisterMetadata = Data.Map.empty
@@ -883,18 +879,12 @@ instrument blacklist' opts m = do
             shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
             if shouldUseDontCareMetadata
             then do
-              dcMeta <- gets (fromJust . dontCareMetadata)
-              useRegMeta <- gets (CLI.reuseRegisters . options)
-              (baseReg, boundReg, keyReg, lockReg) <-
-                if useRegMeta
-                then do
-                  gets (fromJust . dontCareMetadataRegs)
-                else do
-                  baseReg <- load (vBase dcMeta) 0
-                  boundReg <- load (vBound dcMeta) 0
-                  keyReg <- load (vKey dcMeta) 0
-                  lockReg <- load (vLock dcMeta) 0
-                  return (baseReg, boundReg, keyReg, lockReg)
+              meta' <- generateDCMetadata
+              baseReg <- pure $ ConstantOperand $ cBase meta'
+              boundReg <- pure $ ConstantOperand $ cBound meta'
+              keyReg <- pure $ ConstantOperand $ cKey meta'
+              glp <- gets (fromJust . globalLockPtr)
+              lockReg <- load glp 0
               _ <- emitMetadataStoreToLocalVariables resultPtr (baseReg, boundReg, keyReg, lockReg)
               return ()
             else do
@@ -979,8 +969,7 @@ instrument blacklist' opts m = do
               when ((Helpers.isPointerType $ pointerReferent ta') &&
                     (not $ Helpers.isFunctionType $ pointerReferent $ pointerReferent ta')) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
                 let resultPtr = LocalReference (pointerReferent ta') v
-                _ <- getMetadataForAddress addr resultPtr
-                return ()
+                writeMetadataForAddressToLocalVariables addr resultPtr
               return ()
 
       -- Instrument a call instruction unless it is calling inline assembly or a computed function pointer.
