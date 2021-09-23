@@ -331,13 +331,6 @@ __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
   __softboundcets_store_lock_shadow_stack(lock, to_argnum);
 }
 
-__WEAK_INLINE__ void __softboundcets_store_null_return_metadata() {
-  __softboundcets_store_base_shadow_stack(NULL, 0);
-  __softboundcets_store_bound_shadow_stack(NULL, 0);
-  __softboundcets_store_key_shadow_stack(0, 0);
-  __softboundcets_store_lock_shadow_stack(NULL, 0);
-}
-
 __WEAK_INLINE__ void
 __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
                                       void* lock) {
@@ -345,22 +338,6 @@ __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
   __softboundcets_store_bound_shadow_stack(bound, 0);
   __softboundcets_store_key_shadow_stack(key, 0);
   __softboundcets_store_lock_shadow_stack(lock, 0);
-}
-
-__WEAK_INLINE__ void
-__softboundcets_store_dontcare_return_metadata() {
-  __softboundcets_store_base_shadow_stack(NULL, 0);
-  __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
-  __softboundcets_store_key_shadow_stack(0, 0);
-  __softboundcets_store_lock_shadow_stack((void*)1, 0);
-}
-
-__WEAK_INLINE__ void
-__softboundcets_store_dontcare_base_return_metadata(void* base) {
-  __softboundcets_store_base_shadow_stack(base, 0);
-  __softboundcets_store_bound_shadow_stack((void*)PTRDIFF_MAX, 0);
-  __softboundcets_store_key_shadow_stack(0, 0);
-  __softboundcets_store_lock_shadow_stack((void*)1, 0);
 }
 
 void*

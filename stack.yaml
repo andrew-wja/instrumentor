@@ -7,9 +7,9 @@ packages:
 
 ghc-options:
   llvm-hs: -w -optcxx=-std=c++11 -optcxx=-lstdc++ -optcxx=-fno-rtti -optcxx=-Wno-init-list-lifetime -optcxx=-Wno-stringop-overflow
-  "$locals": -w
-  "$targets": -Wall -Wno-partial-type-signatures
-  "$everything": -O2
+  "$locals": -Wall -O2
+  "$targets": -Wall -O2
+  "$everything": -Wall -O2
 
 extra-lib-dirs: [ llvm-root/lib ]
 

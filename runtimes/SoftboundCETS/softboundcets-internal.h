@@ -50,6 +50,7 @@
 #include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -108,6 +109,14 @@ typedef struct {
 #define __LOCK_INDEX 3
 
 } __softboundcets_trie_entry_t;
+
+#define SOFTBOUNDCETS_DONTCARE_BASE_VALUE NULL
+#define SOFTBOUNDCETS_DONTCARE_BOUND_VALUE (void*)PTRDIFF_MAX
+#define SOFTBOUNDCETS_DONTCARE_KEY_VALUE 0
+
+#define SOFTBOUNDCETS_NULLPTR_BASE_VALUE NULL
+#define SOFTBOUNDCETS_NULLPTR_BOUND_VALUE NULL
+#define SOFTBOUNDCETS_NULLPTR_KEY_VALUE 0
 
 extern __softboundcets_trie_entry_t** __softboundcets_trie_primary_table;
 extern size_t* __softboundcets_shadow_stack_ptr;
@@ -174,17 +183,8 @@ __softboundcets_propagate_metadata_shadow_stack_from(int from_argnum,
                                                      int to_argnum);
 
 __WEAK_INLINE__ void
-__softboundcets_store_null_return_metadata();
-
-__WEAK_INLINE__ void
 __softboundcets_store_return_metadata(void* base, void* bound, size_t key,
                                       void* lock);
-
-__WEAK_INLINE__ void
-__softboundcets_store_dontcare_return_metadata();
-
-__WEAK_INLINE__ void
-__softboundcets_store_dontcare_base_return_metadata(void* base);
 
 void*
 __softboundcets_unchecked_calloc(size_t, size_t);

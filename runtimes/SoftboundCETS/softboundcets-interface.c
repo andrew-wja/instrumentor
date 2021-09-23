@@ -215,8 +215,7 @@ __softboundcets_handle_heap_allocation(void* ptr, void** ptr_lock, size_t* ptr_k
 __WEAK_INLINE__ void
 __softboundcets_handle_heap_deallocation(void* ptr, void* ptr_lock, size_t key) {
 
-  if (ptr_lock != NULL) { // Could still be don't-care metadata
-    if (key != 0) { // 0 is the don't-care key
+  if (ptr_lock != NULL) {
 #if defined(SOFTBOUNDCETS_DEBUG)
       __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p, key=%zx\n",
                              ptr, ptr_lock, *((size_t*) ptr_lock));
@@ -248,16 +247,14 @@ __softboundcets_handle_heap_deallocation(void* ptr, void* ptr_lock, size_t key) 
       __softboundcets_lock_next_location = ptr_lock;
 #endif
       return;
-    } else {
+  } else {
 #if defined(SOFTBOUNDCETS_DEBUG)
-      __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
+    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
                              ptr, ptr_lock);
 #endif
-      // Freeing a pointer with don't-care metadata, so do nothing.
-      return;
-    }
+    // Both null pointers and pointers with don't-care metadata use a null pointer as their lock.
+    // Freeing a null pointer is a no-op in C, which allows this overloading to be correct.
   }
-  // Freeing a null pointer -- this is a no-op in C, so do nothing.
   return;
 }
 

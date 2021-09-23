@@ -262,13 +262,6 @@ __softboundcets_metadata_check(void** base,
     __softboundcets_printf("[metadata_check] corrupt metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p\n",
                              base, bound, key, lock);
     __softboundcets_abort();
-
-    if ((*lock) == NULL) {
-#if defined(SOFTBOUNDCETS_DEBUG)
-      __softboundcets_printf("[metadata_check] invalid metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p, lock=%p\n",
-                             base, bound, key, lock, (*lock));
-#endif
-    }
   }
   return;
 }

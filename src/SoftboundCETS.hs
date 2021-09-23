@@ -49,23 +49,32 @@ data VariableMetadata = Variable { vBase :: Operand
 data ConstantMetadata = Constant { cBase :: Const.Constant
                                  , cBound :: Const.Constant
                                  , cKey :: Const.Constant
-                                 } -- Constants and Globals use the runtime-initialized global lock
+                                 , cLock :: Const.Constant
+                                 }
+                      | Global   { gBase :: Const.Constant
+                                 , gBound :: Const.Constant
+                                 , gKey :: Const.Constant
+                                 } -- Globals use the runtime-initialized global lock
 
 baseOf :: (Either VariableMetadata ConstantMetadata) -> Operand
 baseOf (Left l) = vBase l
-baseOf (Right r) = ConstantOperand $ cBase r
+baseOf (Right r@(Constant {})) = ConstantOperand $ cBase r
+baseOf (Right r@(Global {})) = ConstantOperand $ gBase r
 
 boundOf :: (Either VariableMetadata ConstantMetadata) -> Operand
 boundOf (Left l) = vBound l
-boundOf (Right r) = ConstantOperand $ cBound r
+boundOf (Right r@(Constant {})) = ConstantOperand $ cBound r
+boundOf (Right r@(Global {})) = ConstantOperand $ gBound r
 
 keyOf :: (Either VariableMetadata ConstantMetadata) -> Operand
 keyOf (Left l) = vKey l
-keyOf (Right r) = ConstantOperand $ cKey r
+keyOf (Right r@(Constant {})) = ConstantOperand $ cKey r
+keyOf (Right r@(Global {})) = ConstantOperand $ gKey r
 
 lockOf :: (HasCallStack, MonadState SBCETSPassState m) => (Either VariableMetadata ConstantMetadata) -> m Operand
 lockOf (Left l) = pure $ vLock l
-lockOf (Right _) = gets (fromJust . globalLockPtr)
+lockOf (Right r@(Constant {})) = pure $ ConstantOperand $ cLock r
+lockOf (Right (Global {})) = gets (fromJust . globalLockPtr)
 
 type SoftboundCETSPass a = InstrumentorPass () [String] SBCETSPassState a
 
@@ -231,6 +240,27 @@ returnsSafePointer func
 -- | Check if the given function symbol is a function with a runtime wrapper
 isWrappedFunction :: MonadState SBCETSPassState m => Name -> m Bool
 isWrappedFunction n = gets (Data.Set.member n . Data.Map.keysSet . stdlibWrapperPrototypes)
+
+-- | Generate the don't-care metadata. We set base to zero and bound to 2^(pointer bits). We set key and lock to zero.
+--   We cannot use the global lock here, because we may free things with don't-care metadata, and it would look like we were trying to free a global.
+generateDCMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ConstantMetadata
+generateDCMetadata = do
+  let dcMetaBase = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  pointerBits <- gets (CLI.pointerWidth . options)
+  let dcMetaBound = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
+  let dcMetaKey = Const.Int 64 0
+  let dcMetaLock = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  return $ Constant dcMetaBase dcMetaBound dcMetaKey dcMetaLock
+
+-- | The null metadata must always cause a spatial error, but cannot cause a temporal error.
+--   To generate a compulsory spatial error, we can set base = bound. For sanity, we set base = bound = 0 here.
+generateNullMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ConstantMetadata
+generateNullMetadata = do
+  let nullMetaBase = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  let nullMetaBound = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  let nullMetaKey = Const.Int 64 0
+  let nullMetaLock = Const.IntToPtr (Const.Int 64 0) (ptr i8)
+  return $ Constant nullMetaBase nullMetaBound nullMetaKey nullMetaLock
 
 -- | 'inspect' traverses pointer-type expressions and returns the metadata. If there is no metadata for a pointer, it is not instrumented.
 inspect :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m, MonadIRBuilder m) => Operand -> m (Maybe (Type, Either VariableMetadata ConstantMetadata))
@@ -571,10 +601,17 @@ writeMetadataForAddressToLocalVariables addr loadedPtr
         if isJust meta
         then do
           case (snd $ fromJust meta) of
-            (Right meta') -> do -- The metadata for a constant pointer must be constant
+            (Right meta'@(Constant {})) -> do
               baseReg <- pure $ ConstantOperand $ cBase meta'
               boundReg <- pure $ ConstantOperand $ cBound meta'
               keyReg <- pure $ ConstantOperand $ cKey meta'
+              lockReg <- pure $ ConstantOperand $ cLock meta'
+              _ <- emitMetadataStoreToLocalVariables loadedPtr (baseReg, boundReg, keyReg, lockReg)
+              return ()
+            (Right meta'@(Global {})) -> do
+              baseReg <- pure $ ConstantOperand $ gBase meta'
+              boundReg <- pure $ ConstantOperand $ gBound meta'
+              keyReg <- pure $ ConstantOperand $ gKey meta'
               glp <- gets (fromJust . globalLockPtr)
               lockReg <- load glp 0
               _ <- emitMetadataStoreToLocalVariables loadedPtr (baseReg, boundReg, keyReg, lockReg)
@@ -658,8 +695,7 @@ emitMetadataStoreToShadowStack callee p ix = do
     baseReg <- pure $ ConstantOperand $ cBase meta'
     boundReg <- pure $ ConstantOperand $ cBound meta'
     keyReg <- pure $ ConstantOperand $ cKey meta'
-    glp <- gets (fromJust . globalLockPtr)
-    lockReg <- load glp 0
+    lockReg <- pure $ ConstantOperand $ cLock meta'
     _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
     _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
     _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
@@ -680,11 +716,22 @@ emitMetadataStoreToShadowStack callee p ix = do
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
         return ()
-      Right constMeta -> do
+      Right constMeta@(Constant {}) -> do
         ix' <- pure $ int32 ix
         baseReg <- pure $ ConstantOperand $ cBase constMeta
         boundReg <- pure $ ConstantOperand $ cBound constMeta
         keyReg <- pure $ ConstantOperand $ cKey constMeta
+        lockReg <- pure $ ConstantOperand $ cLock constMeta
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_bound_shadow_stack" [boundReg, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
+        _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
+        return ()
+      Right constMeta@(Global {}) -> do
+        ix' <- pure $ int32 ix
+        baseReg <- pure $ ConstantOperand $ gBase constMeta
+        boundReg <- pure $ ConstantOperand $ gBound constMeta
+        keyReg <- pure $ ConstantOperand $ gKey constMeta
         glp <- gets (fromJust . globalLockPtr)
         lockReg <- load glp 0
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_base_shadow_stack" [baseReg, ix']
@@ -692,23 +739,6 @@ emitMetadataStoreToShadowStack callee p ix = do
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_key_shadow_stack" [keyReg, ix']
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
         return ()
-
-generateDCMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ConstantMetadata
-generateDCMetadata = do
-  let dcMetaBase = Const.IntToPtr (Const.Int 64 0) (ptr i8)
-  pointerBits <- gets (CLI.pointerWidth . options)
-  let dcMetaBound = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
-  let dcMetaKey = Const.Int 64 1
-  let meta = Constant dcMetaBase dcMetaBound dcMetaKey
-  return meta
-
-generateNullMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => m ConstantMetadata
-generateNullMetadata = do
-  let nullMetaBase = Const.IntToPtr (Const.Int 64 0) (ptr i8)
-  let nullMetaBound = Const.IntToPtr (Const.Int 64 0) (ptr i8)
-  let nullMetaKey = Const.Int 64 0
-  let meta = Constant nullMetaBase nullMetaBound nullMetaKey
-  return meta
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -769,7 +799,7 @@ instrument blacklist' opts m = do
                 pointerBits <- gets (CLI.pointerWidth . options)
                 let boundConst = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
                 let keyConst = Const.Int 64 1
-                let gMeta = Constant baseConst boundConst keyConst
+                let gMeta = Global baseConst boundConst keyConst
                 let gPtr = ConstantOperand gConst
                 modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
                 mark gPtr Safe -- The address of a global variable is always safe
@@ -781,7 +811,7 @@ instrument blacklist' opts m = do
                                 then Const.BitCast (Const.GetElementPtr False (fromJust $ initializer g) [Const.Int 64 1]) (ptr i8)
                                 else Const.BitCast (Const.GetElementPtr False gConst [Const.Int 64 1]) (ptr i8)
                 let keyConst = Const.Int 64 1
-                let gMeta = Constant baseConst boundConst keyConst
+                let gMeta = Global baseConst boundConst keyConst
                 let gPtr = ConstantOperand gConst
                 modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
                 mark gPtr Safe -- The address of a global variable is always safe
@@ -883,8 +913,7 @@ instrument blacklist' opts m = do
               baseReg <- pure $ ConstantOperand $ cBase meta'
               boundReg <- pure $ ConstantOperand $ cBound meta'
               keyReg <- pure $ ConstantOperand $ cKey meta'
-              glp <- gets (fromJust . globalLockPtr)
-              lockReg <- load glp 0
+              lockReg <- pure $ ConstantOperand $ cLock meta'
               _ <- emitMetadataStoreToLocalVariables resultPtr (baseReg, boundReg, keyReg, lockReg)
               return ()
             else do
@@ -944,15 +973,19 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockReg, keyReg]
                     gen addr (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                     return ()
-                  Right constMeta -> do
+                  Right constMeta@(Constant {}) -> do
                     baseReg <- pure $ ConstantOperand $ cBase constMeta
                     boundReg <- pure $ ConstantOperand $ cBound constMeta
                     -- Check the load is spatially in bounds
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [baseReg, boundReg, addr', tySize]
-                    keyReg <- pure $ ConstantOperand $ cKey constMeta
-                    glp <- gets (fromJust . globalLockPtr)
-                    lockReg <- load glp 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_load_dereference_check" [lockReg, keyReg]
+                    -- No temporal check because constants cannot be deallocated
+                    return ()
+                  Right constMeta@(Global {}) -> do
+                    baseReg <- pure $ ConstantOperand $ gBase constMeta
+                    boundReg <- pure $ ConstantOperand $ gBound constMeta
+                    -- Check the load is spatially in bounds
+                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_load_dereference_check" [baseReg, boundReg, addr', tySize]
+                    -- No temporal check because globals cannot be deallocated
                     return ()
             Safe -> return ()
 
@@ -1233,15 +1266,19 @@ instrument blacklist' opts m = do
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockReg, keyReg]
                     gen tgt (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                     return ()
-                  Right constMeta -> do
+                  Right constMeta@(Constant {}) -> do
                     baseReg <- pure $ ConstantOperand $ cBase constMeta
                     boundReg <- pure $ ConstantOperand $ cBound constMeta
                     -- Check the store is spatially in bounds
                     _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [baseReg, boundReg, tgt', tySize]
-                    keyReg <- pure $ ConstantOperand $ cKey constMeta
-                    glp <- gets (fromJust . globalLockPtr)
-                    lockReg <- load glp 0
-                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_temporal_store_dereference_check" [lockReg, keyReg]
+                    -- No temporal check because constants cannot be deallocated
+                    return ()
+                  Right constMeta@(Global {}) -> do
+                    baseReg <- pure $ ConstantOperand $ gBase constMeta
+                    boundReg <- pure $ ConstantOperand $ gBound constMeta
+                    -- Check the store is spatially in bounds
+                    _ <- emitRuntimeAPIFunctionCall "__softboundcets_spatial_store_dereference_check" [baseReg, boundReg, tgt', tySize]
+                    -- No temporal check because globals cannot be deallocated
                     return ()
             Safe -> return ()
 
@@ -1277,10 +1314,18 @@ instrument blacklist' opts m = do
                       _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
                       gen src (baseReg, boundReg, keyReg, lockReg) -- We just generated these registers
                       return ()
-                    Right constMeta -> do
+                    Right constMeta@(Constant {}) -> do
                       baseReg <- pure $ ConstantOperand $ cBase constMeta
                       boundReg <- pure $ ConstantOperand $ cBound constMeta
                       keyReg <- pure $ ConstantOperand $ cKey constMeta
+                      lockReg <- pure $ ConstantOperand $ cLock constMeta
+                      -- Write the metadata for the stored pointer to the runtime
+                      _ <- emitRuntimeAPIFunctionCall "__softboundcets_metadata_store" [tgt', baseReg, boundReg, keyReg, lockReg]
+                      return ()
+                    Right constMeta@(Global {}) -> do
+                      baseReg <- pure $ ConstantOperand $ gBase constMeta
+                      boundReg <- pure $ ConstantOperand $ gBound constMeta
+                      keyReg <- pure $ ConstantOperand $ gKey constMeta
                       glp <- gets (fromJust . globalLockPtr)
                       lockReg <- load glp 0
                       -- Write the metadata for the stored pointer to the runtime

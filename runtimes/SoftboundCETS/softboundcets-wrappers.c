@@ -126,7 +126,8 @@ __WEAK_INLINE__ DIR*
 softboundcets_fdopendir(int fd) {
   void* ret_ptr = (void*) fdopendir(fd);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                        1, __softboundcets_global_lock);
   return (DIR*)ret_ptr;
 }
 
@@ -141,7 +142,8 @@ __WEAK_INLINE__ struct lconv*
 softboundcets_localeconv(void) {
   struct lconv* temp = localeconv();
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(temp);
+  __softboundcets_store_return_metadata(temp, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return temp;
 }
 
@@ -149,7 +151,8 @@ __WEAK_INLINE__ struct tm*
 softboundcets_gmtime(const time_t *timep) {
   struct tm * temp = gmtime(timep);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(temp);
+  __softboundcets_store_return_metadata(temp, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return temp;
 }
 
@@ -166,7 +169,8 @@ __WEAK_INLINE__ struct group*
 softboundcets_getgrnam(const char *name) {
   void* ret_ptr = getgrnam(name);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -174,7 +178,8 @@ __WEAK_INLINE__ struct passwd*
 softboundcets_getpwnam(const char *name) {
   void* ret_ptr = getpwnam(name);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -182,7 +187,8 @@ __WEAK_INLINE__ struct passwd*
 softboundcets_getpwuid(uid_t uid) {
   void* ret_ptr= getpwuid(uid);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -190,7 +196,8 @@ __WEAK_INLINE__ struct group*
 softboundcets_getgrgid(gid_t gid) {
   void* ret_ptr = getgrgid(gid);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -235,7 +242,8 @@ __WEAK_INLINE__ DIR*
 softboundcets_opendir(const char* name) {
   void* ret_ptr = opendir(name);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return (DIR*)ret_ptr;
 }
 
@@ -264,7 +272,7 @@ softboundcets_strpbrk(const char* s, const char* accept) {
   if(ret_ptr != NULL) {
     __softboundcets_propagate_metadata_shadow_stack_from(1, 0);
   } else {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   return ret_ptr;
 }
@@ -291,7 +299,7 @@ softboundcets_memrchr(const void * s, int c, size_t n) {
   if(ret_ptr != NULL) {
     __softboundcets_propagate_metadata_shadow_stack_from(1, 0);
   } else {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   return ret_ptr;
 }
@@ -303,7 +311,7 @@ softboundcets_memchr(const void * s, int c, size_t n) {
   if(ret_ptr != NULL) {
     __softboundcets_propagate_metadata_shadow_stack_from(1, 0);
   } else {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   return ret_ptr;
 }
@@ -419,7 +427,7 @@ softboundcets_strcpy(char* dest, char* src) {
 __WEAK_INLINE__ char*
 softboundcets_strtok(char* str, const char* delim) {
   char* ret_ptr = strtok(str, delim);
-  __softboundcets_store_dontcare_return_metadata();
+  __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
   return ret_ptr;
 }
 
@@ -429,7 +437,7 @@ softboundcets_strndup(const char* s, size_t n) {
   key_type ptr_key;
   lock_type ptr_lock;
   if(ret_ptr == NULL) {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   } else {
     __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
     __softboundcets_store_return_metadata(ret_ptr,
@@ -446,7 +454,7 @@ softboundcets_strdup(const char* s) {
   key_type ptr_key;
   lock_type ptr_lock;
   if(ret_ptr == NULL) {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   } else {
     __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
     __softboundcets_store_return_metadata(ret_ptr,
@@ -499,7 +507,7 @@ softboundcets_strstr(const char* haystack, const char* needle) {
     __softboundcets_propagate_metadata_shadow_stack_from(1, 0);
   }
   else {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   return ret_ptr;
 }
@@ -517,7 +525,7 @@ softboundcets_realloc(void* ptr, size_t size) {
    void* ret_ptr = realloc(ptr, size);
    __softboundcets_allocation_secondary_trie_allocate(ret_ptr);
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
-  __softboundcets_store_dontcare_return_metadata();
+  __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
 #else
    size_t ptr_key = __softboundcets_load_key_shadow_stack(1);
    void* ptr_lock = __softboundcets_load_lock_shadow_stack(1);
@@ -540,14 +548,14 @@ softboundcets_calloc(size_t nmemb, size_t size) {
  if(ret_ptr != NULL) {
    __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
-  __softboundcets_store_dontcare_return_metadata();
+  __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
 #else
    __softboundcets_store_return_metadata(ret_ptr,
                                          ((char*)(ret_ptr) + (nmemb * size)),
                                          ptr_key, ptr_lock);
 #endif
  } else {
-   __softboundcets_store_null_return_metadata();
+   __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
  }
  return ret_ptr;
 }
@@ -560,7 +568,7 @@ softboundcets_mmap(void* addr, size_t length,
   lock_type ptr_lock=__softboundcets_global_lock;
   char* ret_ptr = mmap(addr, length, prot, flags, fd, offset);
   if(ret_ptr == (void*) -1){
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   } else {
     char* ret_bound = ret_ptr + length;
     __softboundcets_store_return_metadata(ret_ptr, ret_bound,
@@ -573,14 +581,14 @@ __WEAK_INLINE__ void*
 softboundcets_malloc(size_t size) {
   char* ret_ptr = (char*)malloc(size);
   if(ret_ptr == NULL){
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   } else {
     key_type ptr_key=1;
     lock_type ptr_lock=NULL;
     __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
-  __softboundcets_store_dontcare_return_metadata();
+  __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
 #else
     char* ret_bound = ret_ptr + size;
     __softboundcets_store_return_metadata(ret_ptr, ret_bound,
@@ -611,7 +619,7 @@ __WEAK_INLINE__ char*
 softboundcets_ctime(const time_t* timep) {
   char* ret_ptr = ctime(timep);
   if(ret_ptr == NULL){
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   else {
     __softboundcets_store_return_metadata(ret_ptr, ret_ptr + strlen(ret_ptr) + 1,
@@ -629,7 +637,7 @@ softboundcets_getenv(const char* name) {
                                           1, __softboundcets_global_lock);
   }
   else {
-    __softboundcets_store_null_return_metadata();
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_NULLPTR_BASE_VALUE, SOFTBOUNDCETS_NULLPTR_BOUND_VALUE, SOFTBOUNDCETS_NULLPTR_KEY_VALUE, NULL);
   }
   return ret_ptr;
 }
@@ -748,7 +756,8 @@ __WEAK_INLINE__ unsigned short const**
 softboundcets___ctype_b_loc(void) {
   unsigned short const** ret_ptr =__ctype_b_loc();
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -756,7 +765,8 @@ __WEAK_INLINE__ int const**
 softboundcets___ctype_toupper_loc(void) {
   int const ** ret_ptr  =  __ctype_toupper_loc();
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -764,7 +774,8 @@ __WEAK_INLINE__ int const**
 softboundcets___ctype_tolower_loc(void) {
   int const ** ret_ptr  =  __ctype_tolower_loc();
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
@@ -772,7 +783,8 @@ __WEAK_INLINE__ char*
 softboundcets_nl_langinfo(nl_item item){
   char* ret_ptr = nl_langinfo(item);
   // FIXME: overflow allowed because bound is unknown
-  __softboundcets_store_dontcare_base_return_metadata(ret_ptr);
+  __softboundcets_store_return_metadata(ret_ptr, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE,
+                                                      1, __softboundcets_global_lock);
   return ret_ptr;
 }
 
