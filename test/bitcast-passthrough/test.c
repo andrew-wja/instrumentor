@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-char * foo() {
+__attribute__((__noinline__)) char * foo() {
   char *f = (char *)malloc(sizeof(char) * 10);
   for (int i = 0; i < 10; i++)
     f[i] = 'a'+(char)i;
@@ -10,11 +10,11 @@ char * foo() {
   return f;
 }
 
-void bad(int* str) {
+__attribute__((__noinline__)) void bad(int* str) {
   (*(char*)str) = 'a';
 }
 
-void print(char* str) {
+__attribute__((__noinline__)) void print(char* str) {
   printf("%p, %s\n", str, str);
 }
 

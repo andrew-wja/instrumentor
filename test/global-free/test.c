@@ -4,11 +4,11 @@
 char global_array[13] = "Hello World!\0";
 char *global_ptr = global_array;
 
-void bad(char* str) {
+__attribute__((__noinline__)) void bad(char* str) {
   free(str);
 }
 
-void print(char* str) {
+__attribute__((__noinline__)) void print(char* str) {
   printf("%p, %s\n", str, str);
 }
 

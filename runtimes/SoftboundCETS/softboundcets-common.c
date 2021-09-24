@@ -262,6 +262,11 @@ __softboundcets_metadata_check(void** base,
     __softboundcets_printf("[metadata_check] corrupt metadata detected: basePtr=%p, boundPtr=%p, keyPtr=%p, lockPtr=%p\n",
                              base, bound, key, lock);
     __softboundcets_abort();
+  } else {
+    __softboundcets_printf("[metadata_check] base=%p\n", *base);
+    __softboundcets_printf("[metadata_check] bound=%p\n", *bound);
+    __softboundcets_printf("[metadata_check] key=%zx\n", *key);
+    __softboundcets_printf("[metadata_check] lock=%p\n", *lock);
   }
   return;
 }
@@ -279,18 +284,20 @@ __softboundcets_metadata_load(void* addr_of_ptr,
   trie_secondary_table = __softboundcets_trie_primary_table[primary_index];
 
   if(!__SOFTBOUNDCETS_PREALLOCATE_TRIE) {
-    if(trie_secondary_table == NULL) { // We don't have an entry for this pointer
-      *((void**) base) = 0;
-      *((void**) bound) = 0;
-      *((size_t*) key ) = 0;
-      *((size_t*) lock) = 0;
+    if(trie_secondary_table == NULL) { // We don't have an entry for this pointer but we should never get here if the instrumentation is behaving correctly, since we should never try to look up metadata for an address for which we have not previously stored metadata.
+      __softboundcets_printf("[metadata_load] instrumentation bug detected: trying to look up metadata for pointer %p, with no metadata recorded\n", addr_of_ptr);
+      __softboundcets_abort();
+    } else {
+      size_t secondary_index = ((ptr >> 3) & 0x3fffff);
+      __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
+      *((void**) base) = entry_ptr->base;
+      *((void**) bound) = entry_ptr->bound;
+      *((size_t*) key) = entry_ptr->key;
+      *((void**) lock) = (void*) entry_ptr->lock;
     }
   } else {
     size_t secondary_index = ((ptr >> 3) & 0x3fffff);
     __softboundcets_trie_entry_t* entry_ptr = &trie_secondary_table[secondary_index];
-
-    assert(entry_ptr && "[metadata_load] trie lookup failed for pointer");
-
     *((void**) base) = entry_ptr->base;
     *((void**) bound) = entry_ptr->bound;
     *((size_t*) key) = entry_ptr->key;

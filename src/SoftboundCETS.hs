@@ -793,7 +793,7 @@ instrument blacklist' opts m = do
             (Right gType') -> do
               let gConst = Const.GlobalReference (ptr gType') gName
               shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
-              if shouldUseDontCareMetadata
+              if shouldUseDontCareMetadata -- We can only use the spatial don't-care metadata for globals
               then do
                 let baseConst = Const.IntToPtr (Const.Int 64 0) (ptr i8)
                 pointerBits <- gets (CLI.pointerWidth . options)

@@ -4,7 +4,7 @@
 char global_array[13] = "Hello World!\0";
 char *global_ptr = global_array;
 
-void print(char* str) {
+__attribute__((__noinline__)) void print(char* str) {
   char c = *str;
   printf("%p, %c, %s\n", str, c, str);
 }

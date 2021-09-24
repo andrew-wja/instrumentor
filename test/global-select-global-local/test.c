@@ -4,7 +4,7 @@
 char global_array[13] = "Hello World!\0";
 char *global_ptr = global_array;
 
-char * foo() {
+__attribute__((__noinline__)) char * foo() {
   char *f = (char *)malloc(sizeof(char) * 13);
   for (int i = 0; i < 13; i++)
     f[i] = 'a'+(char)i;
@@ -12,7 +12,7 @@ char * foo() {
   return f;
 }
 
-void print(char* str) {
+__attribute__((__noinline__)) void print(char* str) {
   str[0] = 'a';
   printf("%p, %s\n", str, str);
 }

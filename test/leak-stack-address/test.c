@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-void bad(const int x, int** y) {
+__attribute__((__noinline__)) void bad(const int x, int** y) {
   int z = x + 1;
   *y = &z;
 }
