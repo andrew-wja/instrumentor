@@ -740,6 +740,22 @@ emitMetadataStoreToShadowStack callee p ix = do
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
         return ()
 
+-- | Helper function for phi-node incoming value metadata access
+phiMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Named Instruction -> (Operand, Name) -> m (Either VariableMetadata ConstantMetadata, Name)
+phiMeta i (p, n) = do
+  meta <- inspect p
+  if isNothing meta
+  then do
+    pAddr <- pure $ show p
+    pFunc <- gets (show . name . fromJust . currentFunction)
+    pInst <- pure $ show i
+    tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
+    meta' <- generateDCMetadata
+    return (Right meta', n)
+  else do
+    let meta' = snd $ fromJust meta
+    return (meta', n)
+
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
 instrument blacklist' opts m = do
@@ -1145,7 +1161,8 @@ instrument blacklist' opts m = do
                   pAddr <- pure $ show tval
                   pFunc <- gets (show . name . fromJust . currentFunction)
                   pInst <- pure $ show i
-                  error $ "instrumentInst: in function " ++ pFunc ++ ": no metadata for incoming value " ++ pAddr ++ " in " ++ pInst
+                  tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
+                  liftM Right $ generateDCMetadata
 
               fMeta <- inspect fval
               fMeta' <-
@@ -1155,7 +1172,8 @@ instrument blacklist' opts m = do
                   pAddr <- pure $ show fval
                   pFunc <- gets (show . name . fromJust . currentFunction)
                   pInst <- pure $ show i
-                  error $ "instrumentInst: in function " ++ pFunc ++ ": no metadata for incoming value " ++ pAddr ++ " in " ++ pInst
+                  tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
+                  liftM Right $ generateDCMetadata
 
               base' <- select cond (baseOf tMeta') (baseOf fMeta')
               bound' <- select cond (boundOf tMeta') (boundOf fMeta')
@@ -1169,20 +1187,8 @@ instrument blacklist' opts m = do
 
       | (Phi (PointerType ty _) incoming _) <- o = do
         Helpers.emitNamedInstStripMeta ["tbaa"] i
-
-        let phiMeta (p, n) = do meta <- inspect p
-                                if isNothing meta
-                                then do
-                                  pAddr <- pure $ show p
-                                  pFunc <- gets (show . name . fromJust . currentFunction)
-                                  pInst <- pure $ show i
-                                  error $ "instrumentInst: in function " ++ pFunc ++ ": no metadata for incoming value " ++ pAddr ++ " in " ++ pInst
-                                else do
-                                  let meta' = snd $ fromJust meta
-                                  return (meta', n)
-
         when (not $ Helpers.isFunctionType ty) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
-          incomingMeta <- forM incoming phiMeta
+          incomingMeta <- forM incoming (phiMeta i)
           base'  <- phi $ map (\(x, n) -> (baseOf x, n)) incomingMeta
           bound' <- phi $ map (\(x, n) -> (boundOf x, n)) incomingMeta
           key'   <- phi $ map (\(x, n) -> (keyOf x, n)) incomingMeta
