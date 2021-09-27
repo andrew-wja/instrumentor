@@ -116,6 +116,10 @@ data SBCETSPassState = SBCETSPassState { globalLockPtr :: Maybe Operand
                                        -- ^ A 'Map' from pointer 'Operand's in the current function to their lock metadata register.
                                        , globalMetadata :: Map Operand ConstantMetadata
                                        -- ^ A 'Map' from pointer 'Operand's in the global scope to their metadata.
+                                       , localDCMetadata :: Maybe VariableMetadata
+                                       -- ^ We need need the DC metadata in local variables for select and phi instructions
+                                       , localNullMetadata :: Maybe VariableMetadata
+                                       -- ^ We need the null metadata in local variables for select and phi instructions
                                        }
 
 -- | Create an empty 'SBCETSPassState'
@@ -127,6 +131,7 @@ emptySBCETSPassState = SBCETSPassState Nothing Nothing Nothing
                                Data.Map.empty Data.Set.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty Data.Map.empty
                                Data.Map.empty Data.Map.empty Data.Map.empty
+                               Nothing Nothing
 
 -- | The initial 'SBCETSPassState' has 'stdlibWrapperPrototypes' and 'runtimeFunctionPrototypes' populated since these are fixed at build time.
 initSBCETSPassState :: SBCETSPassState
@@ -247,7 +252,7 @@ generateDCMetadata :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilde
 generateDCMetadata = do
   let dcMetaBase = Const.IntToPtr (Const.Int 64 0) (ptr i8)
   pointerBits <- gets (CLI.pointerWidth . options)
-  let dcMetaBound = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
+  let dcMetaBound = Const.IntToPtr (Const.Int 64 ((2 ^ pointerBits) - 1)) (ptr i8)
   let dcMetaKey = Const.Int 64 0
   let dcMetaLock = Const.IntToPtr (Const.Int 64 0) (ptr i8)
   return $ Constant dcMetaBase dcMetaBound dcMetaKey dcMetaLock
@@ -449,17 +454,20 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
             return []
 
       -- Case 3a: Local metadata must be available for all local incoming values to a phi instruction of pointer type.
+      -- It is not enough to leave the metadata for arguments in constants, because we have to generate phi instructions to
+      -- resolve the metadata, and the types of incoming values must match for the IR to be well-formed.
       | (_ := o) <- inst, (Phi (PointerType ty _) incoming _) <- o = do
           if (not $ Helpers.isFunctionType ty) -- TODO-IMPROVE: We don't currently instrument function pointers
           then do
             let incomingV = map fst incoming
             let incomingG = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand incomingV
-            let incomingL = filter (not . Helpers.isConstantOperand) incomingV
             modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
-            return incomingL
+            return incomingV
           else return []
 
       -- Case 3b: Local metadata must be available for all local incoming values to a select instruction of pointer type.
+      -- It is not enough to leave the metadata for arguments in constants, because we have to generate select instructions to
+      -- resolve the metadata, and the types of incoming values must match for the IR to be well-formed.
       | (_ := o) <- inst, (Select _ tv fv _) <- o = do
           selTy <- typeOf tv
           case selTy of
@@ -470,9 +478,8 @@ identifyLocalMetadataAllocations (BasicBlock _ i t) = do
               then do
                 let incomingV = [tv, fv]
                 let incomingG = filter Helpers.isGlobalReference $ map Helpers.walk $ filter Helpers.isConstantOperand incomingV
-                let incomingL = filter (not . Helpers.isConstantOperand) incomingV
                 modify $ \s -> s { currentFunctionGlobals = Data.Set.union (Data.Set.fromList incomingG) $ currentFunctionGlobals s }
-                return incomingL
+                return incomingV
               else return []
 
       -- Case 4: If we allocate anything on the stack, the result is a local pointer to it, which needs metadata.
@@ -740,6 +747,28 @@ emitMetadataStoreToShadowStack callee p ix = do
         _ <- emitRuntimeAPIFunctionCall "__softboundcets_store_lock_shadow_stack" [lockReg, ix']
         return ()
 
+-- | Helper function for select instruction incoming value metadata access
+selectMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Named Instruction -> Operand -> m (Either VariableMetadata ConstantMetadata)
+selectMeta i p = do
+  meta <- inspect p
+  if isNothing meta
+  then do
+    pAddr <- pure $ show p
+    pFunc <- gets (show . name . fromJust . currentFunction)
+    pInst <- pure $ show i
+    tell ["instrumentInst: in function " ++ pFunc ++ ": uninstrumented (using don't-care metadata) incoming value " ++ pAddr ++ " in " ++ pInst]
+    meta' <- gets (fromJust . localDCMetadata) -- Select metadata must reside in local variables
+    return $ Left meta'
+  else do
+    let meta' = snd $ fromJust meta
+    case meta' of
+      (Left _) -> return meta'
+      (Right _) -> do
+        pAddr <- pure $ show p
+        pFunc <- gets (show . name . fromJust . currentFunction)
+        pInst <- pure $ show i
+        error $ "instrumentInst: in function " ++ pFunc ++ ": variable metadata not allocated for instrumented incoming value " ++ pAddr ++ " in " ++ pInst
+
 -- | Helper function for phi-node incoming value metadata access
 phiMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Named Instruction -> (Operand, Name) -> m (Either VariableMetadata ConstantMetadata, Name)
 phiMeta i (p, n) = do
@@ -749,12 +778,18 @@ phiMeta i (p, n) = do
     pAddr <- pure $ show p
     pFunc <- gets (show . name . fromJust . currentFunction)
     pInst <- pure $ show i
-    tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
-    meta' <- generateDCMetadata
-    return (Right meta', n)
+    tell ["instrumentInst: in function " ++ pFunc ++ ": uninstrumented (using don't-care metadata) incoming value " ++ pAddr ++ " in " ++ pInst]
+    meta' <- gets (fromJust . localDCMetadata) -- Phi metadata must reside in local variables
+    return (Left meta', n)
   else do
     let meta' = snd $ fromJust meta
-    return (meta', n)
+    case meta' of
+      (Left _) -> return (meta', n)
+      (Right _) -> do
+        pAddr <- pure $ show p
+        pFunc <- gets (show . name . fromJust . currentFunction)
+        pInst <- pure $ show i
+        error $ "instrumentInst: in function " ++ pFunc ++ ": variable metadata not allocated for instrumented incoming value " ++ pAddr ++ " in " ++ pInst
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -809,13 +844,10 @@ instrument blacklist' opts m = do
             (Right gType') -> do
               let gConst = Const.GlobalReference (ptr gType') gName
               shouldUseDontCareMetadata <- gets (CLI.benchmarkMode . options)
-              if shouldUseDontCareMetadata -- We can only use the spatial don't-care metadata for globals
+              if shouldUseDontCareMetadata
               then do
-                let baseConst = Const.IntToPtr (Const.Int 64 0) (ptr i8)
-                pointerBits <- gets (CLI.pointerWidth . options)
-                let boundConst = Const.IntToPtr (Const.Int 64 (2 ^ pointerBits)) (ptr i8)
-                let keyConst = Const.Int 64 1
-                let gMeta = Global baseConst boundConst keyConst
+                dcConstMeta <- generateDCMetadata
+                let gMeta = Global (cBase dcConstMeta) (cBound dcConstMeta) (cKey dcConstMeta)
                 let gPtr = ConstantOperand gConst
                 modify $ \s -> s { globalMetadata = Data.Map.insert gPtr gMeta $ globalMetadata s }
                 mark gPtr Safe -- The address of a global variable is always safe
@@ -872,6 +904,8 @@ instrument blacklist' opts m = do
               -- Collect all metadata allocation sites so we can allocate local variables for metadata ahead of time
               pointersRequiringLocalMetadata <- liftM (Data.Set.fromList . map Helpers.walk . concat) $ mapM identifyLocalMetadataAllocations $ basicBlocks f
               mapM_ allocateLocalVariableMetadataStorage $ filter (not . flip elem pointerArguments) $ Data.Set.toList pointersRequiringLocalMetadata
+              -- FIXME: Here we need to write the metadata to local variables for all those globals which require local variable metadata due to being passed to select and phi instructions (the local variable storage was just allocated in allocateLocalVariableMetadataStorage)
+              -- Otherwise, the local metadata for those global variables contains whatever garbage is left there by alloca
               emitTerm $ Br firstBlockLabel []
               -- Traverse and instrument the basic blocks
               instrumentBlocks $ basicBlocks f
@@ -896,6 +930,31 @@ instrument blacklist' opts m = do
       modify $ \s -> s { globalLockPtr = Just glp }
       -- Create a lock for local allocations
       emitLocalKeyAndLockCreation
+      -- Create local variable don't-care metadata
+      dcBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.base")
+      dcBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.bound")
+      dcKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.dc.key")
+      dcLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.lock")
+      dcConstMeta <- generateDCMetadata
+      store dcBasePtr 8 (ConstantOperand $ cBase dcConstMeta)
+      store dcBoundPtr 8 (ConstantOperand $ cBound dcConstMeta)
+      store dcKeyPtr 8 (ConstantOperand $ cKey dcConstMeta)
+      store dcLockPtr 8 (ConstantOperand $ cLock dcConstMeta)
+      let dcVarMeta = Variable dcBasePtr dcBoundPtr dcKeyPtr dcLockPtr
+      modify $ \s -> s { localDCMetadata = Just dcVarMeta }
+      -- Create local variable null metadata
+      nullBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
+      nullBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
+      nullKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
+      nullLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
+      nullConstMeta <- generateNullMetadata
+      store nullBasePtr 8 (ConstantOperand $ cBase nullConstMeta)
+      store nullBoundPtr 8 (ConstantOperand $ cBound nullConstMeta)
+      store nullKeyPtr 8 (ConstantOperand $ cKey nullConstMeta)
+      store nullLockPtr 8 (ConstantOperand $ cLock nullConstMeta)
+      let nullVarMeta = Variable nullBasePtr nullBoundPtr nullKeyPtr nullLockPtr
+      modify $ \s -> s { localNullMetadata = Just nullVarMeta }
+      -- Instrument the rest of the block
       mapM_ instrumentInst i
       instrumentTerm t
 
@@ -1152,34 +1211,13 @@ instrument blacklist' opts m = do
               case (tClass, fClass) of
                 (Safe, Safe) -> mark resultPtr Safe
                 _ -> mark resultPtr Unsafe
-
-              tMeta <- inspect tval
-              tMeta' <-
-                if isJust tMeta
-                then return $ snd $ fromJust tMeta
-                else do
-                  pAddr <- pure $ show tval
-                  pFunc <- gets (show . name . fromJust . currentFunction)
-                  pInst <- pure $ show i
-                  tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
-                  liftM Right $ generateDCMetadata
-
-              fMeta <- inspect fval
-              fMeta' <-
-                if isJust fMeta
-                then return $ snd $ fromJust fMeta
-                else do
-                  pAddr <- pure $ show fval
-                  pFunc <- gets (show . name . fromJust . currentFunction)
-                  pInst <- pure $ show i
-                  tell ["instrumentInst: in function " ++ pFunc ++ ": no metadata (using don't-care) for incoming value " ++ pAddr ++ " in " ++ pInst]
-                  liftM Right $ generateDCMetadata
-
-              base' <- select cond (baseOf tMeta') (baseOf fMeta')
-              bound' <- select cond (boundOf tMeta') (boundOf fMeta')
-              key' <- select cond (keyOf tMeta') (keyOf fMeta')
-              tMetaLock <- lockOf tMeta'
-              fMetaLock <- lockOf fMeta'
+              tMeta <- selectMeta i tval
+              fMeta <- selectMeta i fval
+              base' <- select cond (baseOf tMeta) (baseOf fMeta)
+              bound' <- select cond (boundOf tMeta) (boundOf fMeta)
+              key' <- select cond (keyOf tMeta) (keyOf fMeta)
+              tMetaLock <- lockOf tMeta
+              fMetaLock <- lockOf fMeta
               lock' <- select cond tMetaLock fMetaLock
               associate resultPtr $ Left $ Variable base' bound' key' lock'
               kill resultPtr

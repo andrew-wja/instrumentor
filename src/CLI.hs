@@ -33,7 +33,7 @@ defaultOptions = Options { instrumentLoad = False
                          , instrumentStack = False
                          , reuseRegisters = False
                          , benchmarkMode = False
-                         , pointerWidth = 48
+                         , pointerWidth = 63
                          , file = ""
                          , blacklist = ""
                          }
@@ -68,7 +68,7 @@ optParser = Options
       ( long "pointer-width"
       <> help "Assume the width of a pointer is this number of bits"
       <> showDefault
-      <> value 48 )
+      <> value 63 )
   <*> argument str
       ( metavar "FILE"
       <> help "LLVM module to instrument" )

@@ -103,20 +103,21 @@ __softboundcets_temporal_load_dereference_check(void* pointer_lock,
 #if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
   if (pointer_lock != NULL) {
-    if (key != 0) { // 0 is the don't-care value
-      size_t temp = *((size_t*)pointer_lock);
+    size_t temp = *((size_t*)pointer_lock);
 
-      if(temp != key) {
-        __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
-                               key, temp, __softboundcets_lock_next_location);
-        __softboundcets_abort_reason("read through pointer after free or return from function");
+    if(temp != key) {
+      __softboundcets_printf("[temporal_load_dereference_check] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
+                             key, temp, __softboundcets_lock_next_location);
+      switch (temp) {
+        case 0:
+          __softboundcets_abort_reason("read through pointer to stack location after return from function");
+          break;
+        case 1:
+          __softboundcets_abort_reason("read through pointer after free");
+          break;
+        default:
+          __softboundcets_abort();
       }
-    }
-  } else {
-    if (key != 0) { // 0 is the don't-care value
-      __softboundcets_printf("[temporal_load_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
-                               key, pointer_lock);
-      __softboundcets_abort_reason("null pointer dereference");
     }
   }
 #endif
@@ -134,19 +135,22 @@ __softboundcets_temporal_store_dereference_check(void* pointer_lock,
 #if defined(SOFTBOUNDCETS_NOCHECKS_MODE)
 #else
   if (pointer_lock != NULL) {
-    if (key != 0) { // 0 is the don't-care value
-      size_t temp = *((size_t*)pointer_lock);
+    size_t temp = *((size_t*)pointer_lock);
 
-      if(temp != key) {
-        __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key=%zx, *lock=%zx\n",
-                               key, temp);
-        __softboundcets_abort_reason("write through pointer after free or return from function");
+    if (temp != key) {
+      __softboundcets_printf("[temporal_store_dereference_check] Key mismatch, key=%zx, *lock=%zx\n",
+                             key, temp);
+      switch (temp) {
+        case 0:
+          __softboundcets_abort_reason("write through pointer to stack location after return from function");
+          break;
+        case 1:
+          __softboundcets_abort_reason("write through pointer after free");
+          break;
+        default:
+          __softboundcets_abort();
       }
     }
-  } else {
-    __softboundcets_printf("[temporal_store_dereference_check] Invalid pointer, key=%zx, lock=%zx\n",
-                             key, pointer_lock);
-    __softboundcets_abort_reason("null pointer dereference");
   }
 #endif
 
@@ -176,6 +180,9 @@ __softboundcets_destroy_stack_key(size_t key){
   }
 #endif
 
+  // In order to distinguish use-after-return from use-after-free, we use the value 0 for the lock here.
+  // Any value which cannot be legal in subsequent checks will work, but in practice those are either 0 (unused) or 1 (global).
+  // Since we use the value 1 in __softboundcets_handle_heap_deallocation, we can use the value 0 here so they can be distinguished when printing error messages.
   *(lock) = 0;
 
 #if defined(SOFTBOUNDCETS_DEBUG)
@@ -228,7 +235,7 @@ __softboundcets_handle_heap_deallocation(void* ptr, void* ptr_lock, size_t key) 
       if(temp != key) {
         __softboundcets_printf("[heap_deallocation] Key mismatch key=%zx, *lock=%zx, next_ptr=%zx\n",
                                key, temp, __softboundcets_lock_next_location);
-        __softboundcets_abort_reason("double free");
+        __softboundcets_abort_reason("lock and key mismatch when freeing memory");
       }
 #endif
 
@@ -238,23 +245,23 @@ __softboundcets_handle_heap_deallocation(void* ptr, void* ptr_lock, size_t key) 
         __softboundcets_abort_reason("deallocating global variable");
       }
 
-      *((size_t*)ptr_lock) = 1; // Set the key to 1
-      // 0 is the don't-care key so we can't use that or subsequent free() calls will ignore this pointer.
-      // Any nonzero key value will do as long as we can guarantee that it is different from any
-      // potential key that might have already been set. Since the key value 1 is reserved for globals,
-      // it does not appear in heap allocations, so we know that the value 1 can't be the same as the old key value.
+      *((size_t*)ptr_lock) = 0; // 0 is the unused key value
       *((void**) ptr_lock) = __softboundcets_lock_next_location;
+      *((size_t*)ptr_lock) = 1; // Next time we try to free this pointer, it will have a key which cannot match any heap-allocated entitity (1 is the key value for globals)
       __softboundcets_lock_next_location = ptr_lock;
 #endif
       return;
-  } else {
-#if defined(SOFTBOUNDCETS_DEBUG)
-    __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
-                             ptr, ptr_lock);
-#endif
-    // Both null pointers and pointers with don't-care metadata use a null pointer as their lock.
-    // Freeing a null pointer is a no-op in C, which allows this overloading to be correct.
   }
+
+  // Both null pointers and pointers with don't-care metadata use a null pointer as their lock.
+  // Freeing a null pointer is a no-op in C, which allows this overloading to be correct.
+  // In either case, do nothing.
+
+#if defined(SOFTBOUNDCETS_DEBUG)
+  __softboundcets_printf("[heap_deallocation] ptr = %p, lock = %p\n",
+                         ptr, ptr_lock);
+#endif
+
   return;
 }
 
