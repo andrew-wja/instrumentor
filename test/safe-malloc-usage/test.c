@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-int main(int argc, char * argv[]) {
+__attribute__((__optnone__)) int main(int argc, char * argv[]) {
   char *t = malloc(1);
   // this should not cause any checks to be generated
   *t = 'a';

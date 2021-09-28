@@ -588,7 +588,7 @@ softboundcets_malloc(size_t size) {
     __softboundcets_handle_heap_allocation(ret_ptr, &ptr_lock, &ptr_key);
 
 #if defined(SOFTBOUNDCETS_BENCHMARKING_MODE)
-  __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
+    __softboundcets_store_return_metadata(SOFTBOUNDCETS_DONTCARE_BASE_VALUE, SOFTBOUNDCETS_DONTCARE_BOUND_VALUE, SOFTBOUNDCETS_DONTCARE_KEY_VALUE, NULL);
 #else
     char* ret_bound = ret_ptr + size;
     __softboundcets_store_return_metadata(ret_ptr, ret_bound,

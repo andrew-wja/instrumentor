@@ -12,7 +12,7 @@ __attribute__((__noinline__)) void print(char* str) {
   printf("%p, %s\n", str, str);
 }
 
-int main(int argc, char * argv[]) {
+__attribute__((__optnone__)) int main(int argc, char * argv[]) {
   char * ptr1 = &global_array[0];
   char * ptr2 = global_ptr;
   print(ptr1);

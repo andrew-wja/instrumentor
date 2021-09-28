@@ -948,57 +948,44 @@ instrument blacklist' opts m = do
               mapM_ allocateLocalVariableMetadataStorage $ filter (not . flip elem pointerArguments) $ Data.Set.toList pointersRequiringLocalMetadata
               -- FIXME: Here we need to write the metadata to the runtime for all those globals which require local variable metadata.
               -- Otherwise, when we try to load the metadata for those global variables at runtime, we will get an error
+              -- Set up a handle to the global lock pointer
+              gl <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
+              glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.global_lock")
+              store glp 8 gl
+              modify $ \s -> s { globalLockPtr = Just glp }
+              -- Create a lock for local allocations
+              emitLocalKeyAndLockCreation
+              -- Create local variable don't-care metadata
+              dcBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.base")
+              dcBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.bound")
+              dcKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.dc.key")
+              dcLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.lock")
+              dcConstMeta <- generateDCMetadata
+              store dcBasePtr 8 (ConstantOperand $ cBase dcConstMeta)
+              store dcBoundPtr 8 (ConstantOperand $ cBound dcConstMeta)
+              store dcKeyPtr 8 (ConstantOperand $ cKey dcConstMeta)
+              store dcLockPtr 8 (ConstantOperand $ cLock dcConstMeta)
+              let dcVarMeta = Variable dcBasePtr dcBoundPtr dcKeyPtr dcLockPtr
+              modify $ \s -> s { localDCMetadata = Just dcVarMeta }
+              -- Create local variable null metadata
+              nullBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
+              nullBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
+              nullKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
+              nullLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
+              nullConstMeta <- generateNullMetadata
+              store nullBasePtr 8 (ConstantOperand $ cBase nullConstMeta)
+              store nullBoundPtr 8 (ConstantOperand $ cBound nullConstMeta)
+              store nullKeyPtr 8 (ConstantOperand $ cKey nullConstMeta)
+              store nullLockPtr 8 (ConstantOperand $ cLock nullConstMeta)
+              let nullVarMeta = Variable nullBasePtr nullBoundPtr nullKeyPtr nullLockPtr
+              modify $ \s -> s { localNullMetadata = Just nullVarMeta }
               emitTerm $ Br firstBlockLabel []
               -- Traverse and instrument the basic blocks
-              instrumentBlocks $ basicBlocks f
+              mapM_ instrumentBlock $ basicBlocks f
               modify $ \s -> s { classifications = classifications' }
           emitDefn $ GlobalDefinition $ f { name = name', basicBlocks = blocks }
           return ()
       | otherwise = undefined
-
-    instrumentBlocks bs
-      | [] <- bs = return ()
-      | (first:[]) <- bs = instrumentFirstBlock first
-      | (first:blocks) <- bs = do
-          instrumentFirstBlock first
-          mapM_ instrumentBlock blocks
-
-    instrumentFirstBlock (BasicBlock n i t) = do
-      emitBlockStart n
-      -- Set up a handle to the global lock pointer
-      gl <- emitRuntimeAPIFunctionCall "__softboundcets_get_global_lock" []
-      glp <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.global_lock")
-      store glp 8 gl
-      modify $ \s -> s { globalLockPtr = Just glp }
-      -- Create a lock for local allocations
-      emitLocalKeyAndLockCreation
-      -- Create local variable don't-care metadata
-      dcBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.base")
-      dcBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.bound")
-      dcKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.dc.key")
-      dcLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.dc.lock")
-      dcConstMeta <- generateDCMetadata
-      store dcBasePtr 8 (ConstantOperand $ cBase dcConstMeta)
-      store dcBoundPtr 8 (ConstantOperand $ cBound dcConstMeta)
-      store dcKeyPtr 8 (ConstantOperand $ cKey dcConstMeta)
-      store dcLockPtr 8 (ConstantOperand $ cLock dcConstMeta)
-      let dcVarMeta = Variable dcBasePtr dcBoundPtr dcKeyPtr dcLockPtr
-      modify $ \s -> s { localDCMetadata = Just dcVarMeta }
-      -- Create local variable null metadata
-      nullBasePtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.base")
-      nullBoundPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.bound")
-      nullKeyPtr <- (alloca (i64) Nothing 8) `named` (fromString "sbcets.null.key")
-      nullLockPtr <- (alloca (ptr i8) Nothing 8) `named` (fromString "sbcets.null.lock")
-      nullConstMeta <- generateNullMetadata
-      store nullBasePtr 8 (ConstantOperand $ cBase nullConstMeta)
-      store nullBoundPtr 8 (ConstantOperand $ cBound nullConstMeta)
-      store nullKeyPtr 8 (ConstantOperand $ cKey nullConstMeta)
-      store nullLockPtr 8 (ConstantOperand $ cLock nullConstMeta)
-      let nullVarMeta = Variable nullBasePtr nullBoundPtr nullKeyPtr nullLockPtr
-      modify $ \s -> s { localNullMetadata = Just nullVarMeta }
-      -- Instrument the rest of the block
-      mapM_ instrumentInst i
-      instrumentTerm t
 
     instrumentBlock (BasicBlock n i t) = do
       emitBlockStart n

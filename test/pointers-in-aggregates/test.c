@@ -18,8 +18,7 @@ typedef struct {
   bar* third;
 } foo;
 
-int main(int argc, char * argv[]) {
-  // This looks a bit messy, but it's just to prevent the compiler from totally eliding the structure types
+__attribute__((__optnone__)) int main(int argc, char * argv[]) {
   foo *f = (foo*)malloc(sizeof(foo));
   baz z = {2, 1};
   bar b = {1, 1, &z};

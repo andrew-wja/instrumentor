@@ -6,7 +6,7 @@ __attribute__((__noinline__)) void bad(const int x, int** y) {
   *y = &z;
 }
 
-int main(int argc, char * argv[]) {
+__attribute__((__optnone__)) int main(int argc, char * argv[]) {
   int *num;
 
   // leak address of local to num
