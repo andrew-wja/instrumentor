@@ -103,17 +103,17 @@ data SBCETSPassState = SBCETSPassState { globalLockPtr :: Maybe Operand
                                        , blacklist :: Data.Set.Set Name
                                        -- ^ The set of blacklisted function symbols (these will not be instrumented).
                                        , localVariableMetadata :: Map Operand VariableMetadata
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their variable metadata.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their variable metadata.
                                        , localConstantMetadata :: Map Operand ConstantMetadata
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their constant metadata.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their constant metadata.
                                        , baseRegisterMetadata :: Map Operand Operand
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their base metadata register.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their base metadata register.
                                        , boundRegisterMetadata :: Map Operand Operand
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their bound metadata register.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their bound metadata register.
                                        , keyRegisterMetadata :: Map Operand Operand
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their key metadata register.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their key metadata register.
                                        , lockRegisterMetadata :: Map Operand Operand
-                                       -- ^ A 'Map' from pointer 'Operand's in the current function to their lock metadata register.
+                                       -- ^ A 'Map' from pointer 'Operand's used in the current function to their lock metadata register.
                                        , globalMetadata :: Map Operand ConstantMetadata
                                        -- ^ A 'Map' from pointer 'Operand's in the global scope to their metadata.
                                        , localDCMetadata :: Maybe VariableMetadata
@@ -337,6 +337,74 @@ inspect p
           tell ["inspect: in function " ++ (show fname) ++ ": unsupported pointer " ++ pp]
           return Nothing
         (Right _) -> error $ "inspect: in function " ++ (show fname) ++ ": argument " ++ pp ++ " is not a pointer"
+
+-- | inspectV is like inspect except that it only returns variable metadata (required for select and phi incoming values)
+inspectV :: (HasCallStack, MonadState SBCETSPassState m, MonadWriter [String] m, MonadModuleBuilder m, MonadIRBuilder m) => Operand -> m (Maybe (Type, VariableMetadata))
+inspectV p
+  | (LocalReference (PointerType ty _) _) <- p = do
+      if Helpers.isFunctionType ty
+      then return Nothing -- TODO-IMPROVE: Function pointers should be checked for spatial safety at callsites.
+      else do
+        haveVariableMeta <- gets (Data.Map.member p . localVariableMetadata)
+        if haveVariableMeta
+        then gets (Just . (ty,) . (! p) . localVariableMetadata)
+        else do
+          pp <- pure $ show p
+          fname <- gets (name . fromJust . currentFunction)
+          tell ["inspectV: in function " ++ (show fname) ++ ": uninstrumented pointer " ++ pp]
+          return Nothing
+
+  | (ConstantOperand (Const.Null (PointerType ty _))) <- p = do
+      benchmarking <- gets (CLI.benchmarkMode . options)
+      if benchmarking -- Constant null pointers are not instrumented in benchmarking mode
+      then return Nothing
+      else do
+        nullMeta <- gets (fromJust . localNullMetadata)
+        return $ Just (ty, nullMeta)
+  | (ConstantOperand (Const.Undef (PointerType ty _))) <- p = do
+      benchmarking <- gets (CLI.benchmarkMode . options)
+      if benchmarking -- Undef pointers are not instrumented in benchmarking mode
+      then return Nothing
+      else do
+        nullMeta <- gets (fromJust . localNullMetadata)
+        return $ Just (ty, nullMeta)
+  | (ConstantOperand (Const.GlobalReference (PointerType ty _) _)) <- p = do
+      haveVariableMeta <- gets (Data.Map.member p . localVariableMetadata)
+      if haveVariableMeta
+      then gets (Just . (ty,) . (! p) . localVariableMetadata)
+      else do
+        pp <- pure $ show p
+        fname <- gets (name . fromJust . currentFunction)
+        tell ["inspectV: in function " ++ (show fname) ++ ": uninstrumented global pointer " ++ pp]
+        return Nothing
+
+  | (ConstantOperand (Const.GetElementPtr _ addr _)) <- p = inspectV (ConstantOperand addr)
+  | (ConstantOperand (Const.IntToPtr _ (PointerType {}))) <- p = return Nothing
+  | (ConstantOperand (Const.BitCast x (PointerType ty _))) <- p = do
+      meta <- inspectV (ConstantOperand x)
+      case meta of
+        (Just (_, m)) -> return $ Just (ty, m)
+        _ -> return Nothing
+
+  -- TODO-IMPROVE: Some constant expressions of pointer type are currently uninstrumented.
+  {-
+  | (ConstantOperand (Const.AddrSpaceCast _ (PointerType ty _))) <- p = return Nothing
+  | (ConstantOperand op@(Const.Select _ _ _)) <- p, (PointerType ty _) <- typeOf op = return Nothing
+  | (ConstantOperand (Const.ExtractElement v _)) <- p, (PointerType ty _) <- elementType $ typeOf v = return Nothing
+  | (ConstantOperand (Const.ExtractValue agg ixs)) <- p = do
+      ty <- typeIndex (typeOf agg) (map (ConstantOperand . Const.Int 32 . fromIntegral) ixs)
+      return Nothing
+  -}
+  | otherwise = do
+      fname <- gets (name . fromJust . currentFunction)
+      pp <- pure $ show p
+      tp <- typeOf p
+      case tp of
+        (Left s) -> error s
+        (Right (PointerType {})) -> do
+          tell ["inspectV: in function " ++ (show fname) ++ ": unsupported pointer " ++ pp]
+          return Nothing
+        (Right _) -> error $ "inspectV: in function " ++ (show fname) ++ ": argument " ++ pp ++ " is not a pointer"
 
 -- | Allocate local variables to hold the metadata for the given pointer.
 allocateLocalVariableMetadataStorage :: (HasCallStack, MonadState SBCETSPassState m, MonadIRBuilder m, MonadModuleBuilder m) => Operand -> m VariableMetadata
@@ -748,48 +816,22 @@ emitMetadataStoreToShadowStack callee p ix = do
         return ()
 
 -- | Helper function for select instruction incoming value metadata access
-selectMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Named Instruction -> Operand -> m (Either VariableMetadata ConstantMetadata)
-selectMeta i p = do
-  meta <- inspect p
+selectMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Operand -> m (Maybe VariableMetadata)
+selectMeta p = do
+  meta <- inspectV p
   if isNothing meta
-  then do
-    pAddr <- pure $ show p
-    pFunc <- gets (show . name . fromJust . currentFunction)
-    pInst <- pure $ show i
-    tell ["instrumentInst: in function " ++ pFunc ++ ": uninstrumented (using don't-care metadata) incoming value " ++ pAddr ++ " in " ++ pInst]
-    meta' <- gets (fromJust . localDCMetadata) -- Select metadata must reside in local variables
-    return $ Left meta'
-  else do
-    let meta' = snd $ fromJust meta
-    case meta' of
-      (Left _) -> return meta'
-      (Right _) -> do
-        pAddr <- pure $ show p
-        pFunc <- gets (show . name . fromJust . currentFunction)
-        pInst <- pure $ show i
-        error $ "instrumentInst: in function " ++ pFunc ++ ": variable metadata not allocated for instrumented incoming value " ++ pAddr ++ " in " ++ pInst
+  then return Nothing
+  else return $ Just $ snd $ fromJust meta
 
 -- | Helper function for phi-node incoming value metadata access
-phiMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => Named Instruction -> (Operand, Name) -> m (Either VariableMetadata ConstantMetadata, Name)
-phiMeta i (p, n) = do
-  meta <- inspect p
+phiMeta :: (HasCallStack, MonadModuleBuilder m, MonadState SBCETSPassState m, MonadWriter [String] m, MonadIRBuilder m) => (Operand, Name) -> m (Maybe (VariableMetadata, Name))
+phiMeta (p, n) = do
+  meta <- inspectV p
   if isNothing meta
-  then do
-    pAddr <- pure $ show p
-    pFunc <- gets (show . name . fromJust . currentFunction)
-    pInst <- pure $ show i
-    tell ["instrumentInst: in function " ++ pFunc ++ ": uninstrumented (using don't-care metadata) incoming value " ++ pAddr ++ " in " ++ pInst]
-    meta' <- gets (fromJust . localDCMetadata) -- Phi metadata must reside in local variables
-    return (Left meta', n)
+  then return Nothing
   else do
     let meta' = snd $ fromJust meta
-    case meta' of
-      (Left _) -> return (meta', n)
-      (Right _) -> do
-        pAddr <- pure $ show p
-        pFunc <- gets (show . name . fromJust . currentFunction)
-        pInst <- pure $ show i
-        error $ "instrumentInst: in function " ++ pFunc ++ ": variable metadata not allocated for instrumented incoming value " ++ pAddr ++ " in " ++ pInst
+    return $ Just $ (meta', n)
 
 -- | Instrument a given module according to the supplied command-line options and list of blacklisted function symbols.
 instrument :: HasCallStack => [String] -> CLI.Options -> Module -> IO Module
@@ -1211,31 +1253,45 @@ instrument blacklist' opts m = do
               case (tClass, fClass) of
                 (Safe, Safe) -> mark resultPtr Safe
                 _ -> mark resultPtr Unsafe
-              tMeta <- selectMeta i tval
-              fMeta <- selectMeta i fval
-              base' <- select cond (baseOf tMeta) (baseOf fMeta)
-              bound' <- select cond (boundOf tMeta) (boundOf fMeta)
-              key' <- select cond (keyOf tMeta) (keyOf fMeta)
-              tMetaLock <- lockOf tMeta
-              fMetaLock <- lockOf fMeta
-              lock' <- select cond tMetaLock fMetaLock
-              associate resultPtr $ Left $ Variable base' bound' key' lock'
-              kill resultPtr
-              return ()
+              tMeta <- selectMeta tval
+              fMeta <- selectMeta fval
+              if isJust tMeta && isJust fMeta
+              then do
+                let tMeta' = fromJust tMeta
+                let fMeta' = fromJust fMeta
+                base' <- select cond (vBase tMeta') (vBase fMeta')
+                bound' <- select cond (vBound tMeta') (vBound fMeta')
+                key' <- select cond (vKey tMeta') (vKey fMeta')
+                lock' <- select cond (vLock tMeta') (vLock fMeta')
+                associate resultPtr $ Left $ Variable base' bound' key' lock'
+                kill resultPtr
+                return ()
+              else do -- No metadata so we can't instrument this select instruction
+                pFunc <- gets (show . name . fromJust . currentFunction)
+                pInst <- pure $ show i
+                tell ["in function " ++ pFunc ++ ": not instrumenting select instruction with uninstrumented pointer argument(s) " ++ pInst]
+                return ()
 
       | (Phi (PointerType ty _) incoming _) <- o = do
         Helpers.emitNamedInstStripMeta ["tbaa"] i
         when (not $ Helpers.isFunctionType ty) $ do -- TODO-IMPROVE: We don't currently instrument function pointers
-          incomingMeta <- forM incoming (phiMeta i)
-          base'  <- phi $ map (\(x, n) -> (baseOf x, n)) incomingMeta
-          bound' <- phi $ map (\(x, n) -> (boundOf x, n)) incomingMeta
-          key'   <- phi $ map (\(x, n) -> (keyOf x, n)) incomingMeta
-          incomingLocksAndBlockNames <- mapM (\(x, n) -> do {l <- lockOf x; return (l, n)}) incomingMeta
-          lock'  <- phi incomingLocksAndBlockNames
-          let resultPtr = LocalReference (ptr ty) v
-          associate resultPtr $ Left $ Variable base' bound' key' lock'
-          kill resultPtr
-          return ()
+          incomingMeta <- forM incoming phiMeta
+          if all isJust incomingMeta
+          then do
+            let incomingMeta' = map fromJust incomingMeta
+            base'  <- phi $ map (\(x, n) -> (vBase x, n)) incomingMeta'
+            bound' <- phi $ map (\(x, n) -> (vBound x, n)) incomingMeta'
+            key'   <- phi $ map (\(x, n) -> (vKey x, n)) incomingMeta'
+            lock'  <- phi $ map (\(x, n) -> (vLock x, n)) incomingMeta'
+            let resultPtr = LocalReference (ptr ty) v
+            associate resultPtr $ Left $ Variable base' bound' key' lock'
+            kill resultPtr
+            return ()
+          else do -- No metadata so we can't instrument this phi instruction
+            pFunc <- gets (show . name . fromJust . currentFunction)
+            pInst <- pure $ show i
+            tell ["in function " ++ pFunc ++ ": not instrumenting phi instruction with uninstrumented pointer argument(s) " ++ pInst]
+            return ()
 
       | otherwise = Helpers.emitNamedInstStripMeta ["tbaa"] i
 
