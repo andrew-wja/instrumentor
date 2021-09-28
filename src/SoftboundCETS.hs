@@ -946,8 +946,8 @@ instrument blacklist' opts m = do
               -- Collect all metadata allocation sites so we can allocate local variables for metadata ahead of time
               pointersRequiringLocalMetadata <- liftM (Data.Set.fromList . map Helpers.walk . concat) $ mapM identifyLocalMetadataAllocations $ basicBlocks f
               mapM_ allocateLocalVariableMetadataStorage $ filter (not . flip elem pointerArguments) $ Data.Set.toList pointersRequiringLocalMetadata
-              -- FIXME: Here we need to write the metadata to local variables for all those globals which require local variable metadata due to being passed to select and phi instructions (the local variable storage was just allocated in allocateLocalVariableMetadataStorage)
-              -- Otherwise, the local metadata for those global variables contains whatever garbage is left there by alloca
+              -- FIXME: Here we need to write the metadata to the runtime for all those globals which require local variable metadata.
+              -- Otherwise, when we try to load the metadata for those global variables at runtime, we will get an error
               emitTerm $ Br firstBlockLabel []
               -- Traverse and instrument the basic blocks
               instrumentBlocks $ basicBlocks f
