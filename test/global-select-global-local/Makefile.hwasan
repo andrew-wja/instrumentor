@@ -1,0 +1,7 @@
+HWASAN_FLAGS=-fsanitize=hwaddress -fuse-ld=lld -fsanitize-hwaddress-experimental-aliasing -mcmodel=large -mllvm -hwasan-generate-tags-with-calls=1 -mllvm -hwasan-globals -mllvm -hwasan-use-short-granules -mllvm -hwasan-instrument-landing-pads=0 -mllvm -hwasan-instrument-personality-functions
+
+instrumented-hwasan.exe: test.c
+	clang $(HWASAN_FLAGS) test.c -o $@
+
+run-instrumented-hwasan: instrumented-hwasan.exe
+	./instrumented-hwasan.exe
